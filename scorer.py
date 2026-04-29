@@ -4,10 +4,15 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.0-flash:generateContent"
-)
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+PREFERRED_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro-latest",
+    "gemini-pro",
+]
 
 PROMPT_TEMPLATE = """You are a business development assistant. Given this company and job listing, assess whether this company is a good prospect for a software development outsourcing firm.
 
@@ -22,29 +27,43 @@ Respond with JSON only:
 }}"""
 
 
-def score_company(company: dict, api_key: str) -> dict | None:
+def _detect_model(api_key: str) -> str | None:
+    """Try each preferred model and return the first one that responds."""
+    for model in PREFERRED_MODELS:
+        url = f"{GEMINI_BASE}/{model}:generateContent"
+        test_payload = {"contents": [{"parts": [{"text": "Say OK"}]}]}
+        try:
+            resp = requests.post(url, params={"key": api_key}, json=test_payload, timeout=10)
+            if resp.status_code == 200:
+                logger.info(f"Using Gemini model: {model}")
+                return model
+            elif resp.status_code == 403:
+                # Key is valid but access denied — no point trying others
+                logger.error("Gemini API key rejected (403). Check that the Generative Language API is enabled.")
+                return None
+        except Exception:
+            continue
+    return None
+
+
+def score_company(company: dict, api_key: str, model: str) -> dict | None:
     prompt = PROMPT_TEMPLATE.format(
         company_name=company["company_name"],
         job_title=company["job_title"],
         job_snippet=company["description"],
     )
 
+    url = f"{GEMINI_BASE}/{model}:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2},
     }
 
     try:
-        resp = requests.post(
-            GEMINI_URL,
-            params={"key": api_key},
-            json=payload,
-            timeout=20,
-        )
+        resp = requests.post(url, params={"key": api_key}, json=payload, timeout=20)
         resp.raise_for_status()
         raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-        # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -69,10 +88,20 @@ def score_company(company: dict, api_key: str) -> dict | None:
 
 
 def filter_and_score(companies: list[dict], gemini_api_key: str) -> list[dict]:
-    qualified = []
+    model = _detect_model(gemini_api_key)
+    if not model:
+        logger.error(
+            "\n\n*** Gemini API key problem. To fix:\n"
+            "1. Go to https://aistudio.google.com/app/apikey\n"
+            "2. Create a NEW API key\n"
+            "3. Open config.env in Notepad and replace GEMINI_API_KEY with the new key\n"
+            "4. Re-run the script ***\n"
+        )
+        return []
 
+    qualified = []
     for company in companies:
-        result = score_company(company, gemini_api_key)
+        result = score_company(company, gemini_api_key, model)
         if result is None:
             logger.warning(f"Skipping {company['company_name']} — scoring failed.")
             continue
