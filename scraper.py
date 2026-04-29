@@ -6,7 +6,6 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 SEEN_FILE = Path(__file__).parent / "seen_companies.json"
@@ -42,73 +41,90 @@ def _extract_domain(url: str) -> str:
         return url
 
 
-def _parse_jobs_from_html(html: str) -> list[dict]:
-    soup = BeautifulSoup(html, "lxml")
+def _parse_card_text(lines: list[str]) -> tuple[str, str, str]:
+    """
+    TheHub cards render as:
+      Line 0: Job Title
+      Line 1: Company Name • Remote • Full-time  (or similar)
+      Line 2+: optional description snippet
+
+    Returns (job_title, company_name, description).
+    """
+    job_title = lines[0].strip() if lines else ""
+
+    company_name = ""
+    description = ""
+
+    if len(lines) > 1:
+        # Company line uses bullet separators — company is the first segment
+        parts = [p.strip() for p in lines[1].replace("·", "•").split("•")]
+        company_name = parts[0].strip()
+
+    if len(lines) > 2:
+        description = " ".join(lines[2:5]).strip()[:500]
+
+    return job_title, company_name, description
+
+
+def _scrape_page(page, url: str) -> list[dict]:
+    try:
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.wait_for_selector("a[href^='/jobs/']", timeout=15000)
+        # Small extra wait for any lazy-loaded content
+        page.wait_for_timeout(1500)
+    except PWTimeout:
+        logger.warning(f"Timeout loading: {url}")
+        return []
+
+    # Use Playwright JS to extract card data directly from the live DOM
+    cards_data = page.eval_on_selector_all(
+        "a[href^='/jobs/']",
+        """els => els
+            .filter(el => el.getAttribute('href').length > 7 && !el.getAttribute('href').includes('?'))
+            .map(el => ({
+                href: el.getAttribute('href'),
+                text: el.innerText
+            }))
+        """
+    )
+
     jobs = []
+    for card in cards_data:
+        href = card.get("href", "")
+        raw_text = card.get("text", "")
 
-    # TheHub renders job cards as <a> tags linking to /jobs/<slug>
-    cards = soup.find_all("a", href=lambda h: h and h.startswith("/jobs/") and len(h) > 7)
-
-    for card in cards:
-        try:
-            href = card.get("href", "")
-            job_url = f"https://thehub.io{href}"
-
-            # All visible text nodes in the card
-            texts = [t.strip() for t in card.stripped_strings if t.strip()]
-
-            if len(texts) < 2:
-                continue
-
-            # First text is usually job title, second is company name
-            # (order can vary — we pick the longest as title)
-            job_title = texts[0]
-            company_name = ""
-            description = ""
-
-            # Find company name: look for a span/div that isn't the title
-            company_el = (
-                card.select_one("[class*='company']")
-                or card.select_one("[class*='employer']")
-                or card.select_one("span")
-            )
-            if company_el:
-                company_name = company_el.get_text(strip=True)
-
-            # If we still have no company, use second text block
-            if not company_name and len(texts) > 1:
-                company_name = texts[1]
-
-            # Description: any paragraph text
-            desc_el = card.select_one("p")
-            if desc_el:
-                description = desc_el.get_text(strip=True)[:500]
-            elif len(texts) > 3:
-                description = " ".join(texts[2:5])[:500]
-
-            if job_title and company_name and job_title != company_name:
-                jobs.append({
-                    "company_name": company_name,
-                    "company_website": "",
-                    "domain": "",
-                    "job_title": job_title,
-                    "description": description,
-                    "job_url": job_url,
-                })
-        except Exception as e:
-            logger.debug(f"Card parse error: {e}")
+        lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+        if len(lines) < 2:
             continue
 
+        job_title, company_name, description = _parse_card_text(lines)
+
+        if not job_title or not company_name:
+            continue
+
+        jobs.append({
+            "company_name": company_name,
+            "company_website": "",
+            "domain": "",
+            "job_title": job_title,
+            "description": description,
+            "job_url": f"https://thehub.io{href}",
+        })
+
+    logger.info(f"Found {len(jobs)} job cards on {url}")
     return jobs
 
 
-def _scrape_with_playwright() -> list[dict]:
-    all_jobs = []
+def scrape_jobs() -> list[dict]:
+    seen = _load_seen()
+    today = str(date.today())
+    results = []
+    seen_companies_this_run: set[str] = set()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.set_extra_http_headers({
+        pw_page = browser.new_page()
+        pw_page.set_extra_http_headers({
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -121,56 +137,30 @@ def _scrape_with_playwright() -> list[dict]:
             url = BASE_URL + (f"&page={page_num}" if page_num > 1 else "")
             logger.info(f"Scraping page {page_num}: {url}")
 
-            try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
-                # Wait for job cards to appear
-                page.wait_for_selector("a[href^='/jobs/']", timeout=15000)
-            except PWTimeout:
-                logger.warning(f"Timeout waiting for jobs on page {page_num}, stopping.")
-                break
-
-            html = page.content()
-            jobs = _parse_jobs_from_html(html)
-
+            jobs = _scrape_page(pw_page, url)
             if not jobs:
-                logger.info(f"No jobs found on page {page_num}, stopping pagination.")
+                logger.info(f"No jobs on page {page_num}, stopping.")
                 break
 
-            logger.info(f"Page {page_num}: found {len(jobs)} job cards")
-            all_jobs.extend(jobs)
+            for job in jobs:
+                company = job["company_name"].strip().lower()
+                if seen.get(company) == today:
+                    continue
+                if company in seen_companies_this_run:
+                    continue
+                seen_companies_this_run.add(company)
+                seen[company] = today
+                results.append(job)
 
-            # Check for a next-page link
-            next_link = page.query_selector("a[rel='next']")
-            if not next_link:
+            # Check for next page
+            next_link = pw_page.query_selector("a[href*='page=2'], a[rel='next']")
+            if not next_link or page_num >= 10:
                 break
 
             page_num += 1
             time.sleep(random.uniform(1, 2))
 
         browser.close()
-
-    return all_jobs
-
-
-def scrape_jobs() -> list[dict]:
-    seen = _load_seen()
-    today = str(date.today())
-    results = []
-    seen_companies_this_run: set[str] = set()
-
-    raw_jobs = _scrape_with_playwright()
-
-    for job in raw_jobs:
-        company = job["company_name"].strip().lower()
-
-        if seen.get(company) == today:
-            continue
-        if company in seen_companies_this_run:
-            continue
-
-        seen_companies_this_run.add(company)
-        seen[company] = today
-        results.append(job)
 
     _save_seen(seen)
     logger.info(f"Scraped {len(results)} new companies.")

@@ -1,4 +1,4 @@
-"""Run this once to dump TheHub's rendered HTML so we can find the right selectors."""
+"""Run this to verify the scraper can see job cards correctly."""
 from playwright.sync_api import sync_playwright
 
 URL = (
@@ -13,20 +13,20 @@ with sync_playwright() as p:
     page = browser.new_page()
     print("Loading page...")
     page.goto(URL, wait_until="networkidle", timeout=30000)
-    print("Page loaded. Waiting 3 extra seconds for JS...")
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(1500)
 
-    html = page.content()
-    with open("debug_page.html", "w", encoding="utf-8") as f:
-        f.write(html)
+    cards = page.eval_on_selector_all(
+        "a[href^='/jobs/']",
+        """els => els
+            .filter(el => el.getAttribute('href').length > 7 && !el.getAttribute('href').includes('?'))
+            .map(el => ({href: el.getAttribute('href'), text: el.innerText}))
+        """
+    )
 
-    print(f"Saved {len(html)} bytes to debug_page.html")
-
-    # Print all unique href patterns to spot job links
-    links = page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
-    job_links = [l for l in links if l and "job" in l.lower()]
-    print(f"\nFound {len(job_links)} links containing 'job':")
-    for l in job_links[:20]:
-        print(" ", l)
+    print(f"\nFound {len(cards)} job cards.\n")
+    for i, card in enumerate(cards[:5]):
+        print(f"--- Card {i+1} ---")
+        print(f"URL  : https://thehub.io{card['href']}")
+        print(f"Text :\n{card['text']}\n")
 
     browser.close()
