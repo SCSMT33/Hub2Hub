@@ -6,8 +6,8 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 SEEN_FILE = Path(__file__).parent / "seen_companies.json"
 BASE_URL = (
@@ -16,13 +16,6 @@ BASE_URL = (
     "&roles=fullstackdeveloper&roles=mobiledevelopment&roles=uxuidesigner"
     "&roles=qualityassurance&countryCode=REMOTE&sorting=newJobs"
 )
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-}
 
 logger = logging.getLogger(__name__)
 
@@ -49,70 +42,114 @@ def _extract_domain(url: str) -> str:
         return url
 
 
-def _parse_jobs_page(soup: BeautifulSoup) -> list[dict]:
+def _parse_jobs_from_html(html: str) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
     jobs = []
-    # TheHub job cards — selectors based on their current markup
-    cards = soup.select("a[data-cy='job-list-item']") or soup.select(".JobCard") or soup.select("article")
 
-    if not cards:
-        # Fallback: look for any anchor wrapping job data
-        cards = soup.find_all("a", href=lambda h: h and "/jobs/" in h)
+    # TheHub renders job cards as <a> tags linking to /jobs/<slug>
+    cards = soup.find_all("a", href=lambda h: h and h.startswith("/jobs/") and len(h) > 7)
 
     for card in cards:
         try:
             href = card.get("href", "")
-            job_url = f"https://thehub.io{href}" if href.startswith("/") else href
+            job_url = f"https://thehub.io{href}"
 
-            # Company name
+            # All visible text nodes in the card
+            texts = [t.strip() for t in card.stripped_strings if t.strip()]
+
+            if len(texts) < 2:
+                continue
+
+            # First text is usually job title, second is company name
+            # (order can vary — we pick the longest as title)
+            job_title = texts[0]
+            company_name = ""
+            description = ""
+
+            # Find company name: look for a span/div that isn't the title
             company_el = (
-                card.select_one("[data-cy='company-name']")
-                or card.select_one(".company-name")
-                or card.select_one("h3")
+                card.select_one("[class*='company']")
+                or card.select_one("[class*='employer']")
+                or card.select_one("span")
             )
-            company_name = company_el.get_text(strip=True) if company_el else ""
+            if company_el:
+                company_name = company_el.get_text(strip=True)
 
-            # Job title
-            title_el = (
-                card.select_one("[data-cy='job-title']")
-                or card.select_one(".job-title")
-                or card.select_one("h2")
-            )
-            job_title = title_el.get_text(strip=True) if title_el else ""
+            # If we still have no company, use second text block
+            if not company_name and len(texts) > 1:
+                company_name = texts[1]
 
-            # Company website — may appear as a link inside the card
-            website_el = card.select_one("a[href*='://']:not([href*='thehub.io'])")
-            company_website = website_el["href"] if website_el else ""
+            # Description: any paragraph text
+            desc_el = card.select_one("p")
+            if desc_el:
+                description = desc_el.get_text(strip=True)[:500]
+            elif len(texts) > 3:
+                description = " ".join(texts[2:5])[:500]
 
-            # Description snippet
-            desc_el = card.select_one(".description") or card.select_one("p")
-            description = desc_el.get_text(strip=True)[:500] if desc_el else ""
-
-            if company_name and job_title:
-                jobs.append(
-                    {
-                        "company_name": company_name,
-                        "company_website": company_website,
-                        "domain": _extract_domain(company_website),
-                        "job_title": job_title,
-                        "description": description,
-                        "job_url": job_url,
-                    }
-                )
+            if job_title and company_name and job_title != company_name:
+                jobs.append({
+                    "company_name": company_name,
+                    "company_website": "",
+                    "domain": "",
+                    "job_title": job_title,
+                    "description": description,
+                    "job_url": job_url,
+                })
         except Exception as e:
-            logger.debug(f"Failed to parse card: {e}")
+            logger.debug(f"Card parse error: {e}")
             continue
 
     return jobs
 
 
-def _fetch_page(url: str) -> BeautifulSoup | None:
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        return BeautifulSoup(resp.text, "html.parser")
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch {url}: {e}")
-        return None
+def _scrape_with_playwright() -> list[dict]:
+    all_jobs = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_extra_http_headers({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        })
+
+        page_num = 1
+        while True:
+            url = BASE_URL + (f"&page={page_num}" if page_num > 1 else "")
+            logger.info(f"Scraping page {page_num}: {url}")
+
+            try:
+                page.goto(url, wait_until="networkidle", timeout=30000)
+                # Wait for job cards to appear
+                page.wait_for_selector("a[href^='/jobs/']", timeout=15000)
+            except PWTimeout:
+                logger.warning(f"Timeout waiting for jobs on page {page_num}, stopping.")
+                break
+
+            html = page.content()
+            jobs = _parse_jobs_from_html(html)
+
+            if not jobs:
+                logger.info(f"No jobs found on page {page_num}, stopping pagination.")
+                break
+
+            logger.info(f"Page {page_num}: found {len(jobs)} job cards")
+            all_jobs.extend(jobs)
+
+            # Check for a next-page link
+            next_link = page.query_selector("a[rel='next']")
+            if not next_link:
+                break
+
+            page_num += 1
+            time.sleep(random.uniform(1, 2))
+
+        browser.close()
+
+    return all_jobs
 
 
 def scrape_jobs() -> list[dict]:
@@ -121,41 +158,19 @@ def scrape_jobs() -> list[dict]:
     results = []
     seen_companies_this_run: set[str] = set()
 
-    page = 1
-    while True:
-        url = BASE_URL + (f"&page={page}" if page > 1 else "")
-        logger.info(f"Scraping page {page}: {url}")
+    raw_jobs = _scrape_with_playwright()
 
-        soup = _fetch_page(url)
-        if soup is None:
-            break
+    for job in raw_jobs:
+        company = job["company_name"].strip().lower()
 
-        jobs = _parse_jobs_page(soup)
-        if not jobs:
-            logger.info(f"No jobs found on page {page}, stopping pagination.")
-            break
+        if seen.get(company) == today:
+            continue
+        if company in seen_companies_this_run:
+            continue
 
-        for job in jobs:
-            company = job["company_name"].strip().lower()
-
-            # Skip if already seen today
-            if seen.get(company) == today:
-                continue
-            # Skip duplicates within this run
-            if company in seen_companies_this_run:
-                continue
-
-            seen_companies_this_run.add(company)
-            seen[company] = today
-            results.append(job)
-
-        # Check for next page link
-        next_btn = soup.select_one("a[rel='next']") or soup.select_one(".pagination__next")
-        if not next_btn:
-            break
-
-        page += 1
-        time.sleep(random.uniform(1, 2))
+        seen_companies_this_run.add(company)
+        seen[company] = today
+        results.append(job)
 
     _save_seen(seen)
     logger.info(f"Scraped {len(results)} new companies.")
