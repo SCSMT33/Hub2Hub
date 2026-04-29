@@ -1,8 +1,13 @@
 import json
 import logging
-import google.generativeai as genai
+import requests
 
 logger = logging.getLogger(__name__)
+
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-1.5-flash:generateContent"
+)
 
 PROMPT_TEMPLATE = """You are a business development assistant. Given this company and job listing, assess whether this company is a good prospect for a software development outsourcing firm.
 
@@ -17,21 +22,27 @@ Respond with JSON only:
 }}"""
 
 
-def init_gemini(api_key: str):
-    genai.configure(api_key=api_key)
-
-
-def score_company(company: dict) -> dict | None:
+def score_company(company: dict, api_key: str) -> dict | None:
     prompt = PROMPT_TEMPLATE.format(
         company_name=company["company_name"],
         job_title=company["job_title"],
         job_snippet=company["description"],
     )
 
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2},
+    }
+
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
-        raw = response.text.strip()
+        resp = requests.post(
+            GEMINI_URL,
+            params={"key": api_key},
+            json=payload,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
         # Strip markdown code fences if present
         if raw.startswith("```"):
@@ -58,11 +69,10 @@ def score_company(company: dict) -> dict | None:
 
 
 def filter_and_score(companies: list[dict], gemini_api_key: str) -> list[dict]:
-    init_gemini(gemini_api_key)
     qualified = []
 
     for company in companies:
-        result = score_company(company)
+        result = score_company(company, gemini_api_key)
         if result is None:
             logger.warning(f"Skipping {company['company_name']} — scoring failed.")
             continue
