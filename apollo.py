@@ -14,17 +14,28 @@ TARGET_TITLES = [
 ]
 
 
-def find_contact(domain: str, api_key: str) -> dict:
-    if not domain:
+def find_contact(company_name: str, domain: str, api_key: str) -> dict:
+    # Search by domain if available, otherwise fall back to company name
+    if domain:
+        payload = {
+            "api_key": api_key,
+            "person_titles": TARGET_TITLES,
+            "organization_domains": [domain],
+            "page": 1,
+            "per_page": 1,
+        }
+        search_label = domain
+    elif company_name:
+        payload = {
+            "api_key": api_key,
+            "person_titles": TARGET_TITLES,
+            "q_organization_name": company_name,
+            "page": 1,
+            "per_page": 1,
+        }
+        search_label = company_name
+    else:
         return _not_found()
-
-    payload = {
-        "api_key": api_key,
-        "person_titles": TARGET_TITLES,
-        "organization_domains": [domain],
-        "page": 1,
-        "per_page": 1,
-    }
 
     try:
         resp = requests.post(APOLLO_URL, json=payload, timeout=15)
@@ -33,7 +44,7 @@ def find_contact(domain: str, api_key: str) -> dict:
 
         people = data.get("people", [])
         if not people:
-            logger.info(f"No contact found for domain: {domain}")
+            logger.info(f"No contact found for: {search_label}")
             return _not_found()
 
         person = people[0]
@@ -47,10 +58,10 @@ def find_contact(domain: str, api_key: str) -> dict:
         }
 
     except requests.HTTPError as e:
-        logger.error(f"Apollo HTTP error for {domain}: {e} — {resp.text[:200]}")
+        logger.error(f"Apollo HTTP error for {search_label}: {e} — {resp.text[:200]}")
         return _not_found()
     except Exception as e:
-        logger.error(f"Apollo error for {domain}: {e}")
+        logger.error(f"Apollo error for {search_label}: {e}")
         return _not_found()
 
 
@@ -68,8 +79,9 @@ def _not_found() -> dict:
 def enrich_contacts(companies: list[dict], api_key: str) -> list[dict]:
     for company in companies:
         domain = company.get("domain", "")
-        contact = find_contact(domain, api_key)
+        name = company.get("company_name", "")
+        contact = find_contact(name, domain, api_key)
         company["contact"] = contact
         status = "found" if contact["found"] else "not found"
-        logger.info(f"Apollo [{status}]: {company['company_name']} ({domain})")
+        logger.info(f"Apollo [{status}]: {name}")
     return companies

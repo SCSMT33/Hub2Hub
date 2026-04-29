@@ -4,7 +4,6 @@ import random
 import logging
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -31,87 +30,56 @@ def _save_seen(seen: dict):
         json.dump(seen, f, indent=2)
 
 
-def _extract_domain(url: str) -> str:
-    if not url:
-        return ""
-    try:
-        parsed = urlparse(url if url.startswith("http") else f"https://{url}")
-        return parsed.netloc.lstrip("www.")
-    except Exception:
-        return url
-
-
-def _parse_card_text(lines: list[str]) -> tuple[str, str, str]:
-    """
-    TheHub cards render as:
-      Line 0: Job Title
-      Line 1: Company Name • Remote • Full-time  (or similar)
-      Line 2+: optional description snippet
-
-    Returns (job_title, company_name, description).
-    """
-    job_title = lines[0].strip() if lines else ""
-
-    company_name = ""
-    description = ""
-
-    if len(lines) > 1:
-        # Company line uses bullet separators — company is the first segment
-        parts = [p.strip() for p in lines[1].replace("·", "•").split("•")]
-        company_name = parts[0].strip()
-
-    if len(lines) > 2:
-        description = " ".join(lines[2:5]).strip()[:500]
-
-    return job_title, company_name, description
-
-
 def _scrape_page(page, url: str) -> list[dict]:
     try:
         page.goto(url, wait_until="networkidle", timeout=30000)
         page.wait_for_selector("a[href^='/jobs/']", timeout=15000)
-        # Small extra wait for any lazy-loaded content
         page.wait_for_timeout(1500)
     except PWTimeout:
         logger.warning(f"Timeout loading: {url}")
         return []
 
-    # Use Playwright JS to extract card data directly from the live DOM
+    # Walk up one level to div.card__content which holds the text
     cards_data = page.eval_on_selector_all(
         "a[href^='/jobs/']",
         """els => els
-            .filter(el => el.getAttribute('href').length > 7 && !el.getAttribute('href').includes('?'))
-            .map(el => ({
-                href: el.getAttribute('href'),
-                text: el.innerText
-            }))
+            .filter(el => {
+                const href = el.getAttribute('href');
+                return href.length > 7 && !href.includes('?');
+            })
+            .map(el => {
+                const card = el.parentElement;
+                const text = card ? card.innerText.trim() : '';
+                const lines = text.split('\\n').map(l => l.trim()).filter(l => l);
+                const jobTitle = lines[0] || '';
+                // Line 2: "CompanyName Remote Full-time" — company is everything before "Remote"
+                const secondLine = lines[1] || '';
+                const remoteIdx = secondLine.search(/\\bRemote\\b|\\bOn-site\\b|\\bHybrid\\b/i);
+                const companyName = remoteIdx > 0
+                    ? secondLine.slice(0, remoteIdx).trim()
+                    : secondLine.split(' ')[0];
+                return {
+                    href: el.getAttribute('href'),
+                    job_title: jobTitle,
+                    company_name: companyName,
+                };
+            })
+            .filter(c => c.job_title && c.company_name)
         """
     )
 
     jobs = []
     for card in cards_data:
-        href = card.get("href", "")
-        raw_text = card.get("text", "")
-
-        lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
-        if len(lines) < 2:
-            continue
-
-        job_title, company_name, description = _parse_card_text(lines)
-
-        if not job_title or not company_name:
-            continue
-
         jobs.append({
-            "company_name": company_name,
+            "company_name": card["company_name"],
             "company_website": "",
             "domain": "",
-            "job_title": job_title,
-            "description": description,
-            "job_url": f"https://thehub.io{href}",
+            "job_title": card["job_title"],
+            "description": f"Hiring: {card['job_title']}",
+            "job_url": f"https://thehub.io{card['href']}",
         })
 
-    logger.info(f"Found {len(jobs)} job cards on {url}")
+    logger.info(f"Found {len(jobs)} jobs on {url}")
     return jobs
 
 
@@ -153,7 +121,7 @@ def scrape_jobs() -> list[dict]:
                 results.append(job)
 
             # Check for next page
-            next_link = pw_page.query_selector("a[href*='page=2'], a[rel='next']")
+            next_link = pw_page.query_selector(f"a[href*='page={page_num + 1}']")
             if not next_link or page_num >= 10:
                 break
 
