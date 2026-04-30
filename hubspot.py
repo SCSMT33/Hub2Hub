@@ -149,7 +149,7 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
 
             task_id = client.create_task(company)
             if not task_id:
-                raise RuntimeError("Failed to create task")
+                logger.warning(f"Task creation skipped for {company['company_name']} (likely missing scope — add crm.objects.tasks.write to the Private App)")
 
             pushed += 1
             logger.info(f"Pushed to HubSpot: {company['company_name']}")

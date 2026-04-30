@@ -2,6 +2,8 @@ import logging
 import time
 import requests
 
+from page_contacts import scrape_contact_from_job_page
+
 logger = logging.getLogger(__name__)
 
 HUNTER_URL = "https://api.hunter.io/v2/domain-search"
@@ -89,17 +91,31 @@ def _not_found() -> dict:
 
 def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) -> list[dict]:
     for i, company in enumerate(companies):
+        name = company.get("company_name", "")
+
         if dry_run and i >= 1:
             company["contact"] = _not_found()
-            logger.info(f"Hunter [skipped — dry run]: {company['company_name']}")
+            logger.info(f"Contact lookup [skipped — dry run]: {name}")
             continue
 
-        domain = company.get("domain", "")
-        name = company.get("company_name", "")
-        contact = find_contact(name, domain, api_key)
+        # Step 1: try scraping the job page directly (free, no credits)
+        job_url = company.get("job_url", "")
+        contact = None
+        if job_url:
+            contact = scrape_contact_from_job_page(job_url)
+
+        # Step 2: fall back to Hunter.io
+        if not contact:
+            if api_key:
+                domain = company.get("domain", "")
+                contact = find_contact(name, domain, api_key)
+                logger.info(f"Hunter [{'found' if contact['found'] else 'not found'}]: {name}")
+            else:
+                contact = _not_found()
+        else:
+            logger.info(f"Job page [found]: {name} — {contact['email']}")
+
         company["contact"] = contact
-        status = "found" if contact["found"] else "not found"
-        logger.info(f"Hunter [{status}]: {name}")
         time.sleep(1)
 
     return companies
