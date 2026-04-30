@@ -167,19 +167,25 @@ def dry_run_preview(company: dict):
 
     if contact and contact.get("found"):
         name = f"{contact['first_name']} {contact['last_name']}".strip()
-        contact_line = f"  Contact : {name} ({contact['title']}) — {contact['email']}\n  LinkedIn: {contact['linkedin_url']}"
+        contact_line = (
+            f"  Contact  : {name}\n"
+            f"  Position : {contact['title'] or 'N/A'}\n"
+            f"  Email    : {contact['email'] or 'N/A'}"
+        )
     else:
         contact_line = (
-            f"  ⚠️  No contact found via Apollo. Manual lookup needed.\n"
-            f"  Apollo : https://app.apollo.io/#/companies?q_organization_domains[]={domain}"
+            f"  Contact  : Not found\n"
+            f"  Position : —\n"
+            f"  Email    : —"
         )
 
     print(
-        f"TASK SUBJECT : New Lead: {company['company_name']} is hiring a {company['job_title']}\n"
-        f"  Score    : {company['score'].upper()} — {company['reason']}\n"
-        f"  Website  : {company.get('company_website', 'N/A')}\n"
-        f"  Job URL  : {company['job_url']}\n"
+        f"Company  : {company['company_name']}\n"
+        f"Hiring   : {company['job_title']}\n"
+        f"Score    : {company['score'].upper()} — {company['reason']}\n"
+        f"Job URL  : {company['job_url']}\n"
         f"{contact_line}\n"
+        f"{'-' * 50}"
     )
 
 
