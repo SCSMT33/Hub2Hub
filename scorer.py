@@ -77,17 +77,17 @@ def score_company(company: dict, api_key: str, model: str, api_version: str) -> 
     }
 
     try:
-        for attempt in range(3):
+        for attempt in range(5):
             resp = requests.post(url, params={"key": api_key}, json=payload, timeout=20)
             if resp.status_code == 503:
-                wait = 5 * (attempt + 1)
+                wait = 10 * (attempt + 1)
                 logger.warning(f"Gemini 503 for {company['company_name']}, retrying in {wait}s...")
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
             break
         else:
-            logger.error(f"Gemini still unavailable after 3 attempts for {company['company_name']}")
+            logger.error(f"Gemini still unavailable after 5 attempts for {company['company_name']}")
             return None
         raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 

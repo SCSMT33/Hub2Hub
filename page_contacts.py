@@ -1,7 +1,6 @@
 import re
 import logging
 from urllib.parse import urlparse
-import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
@@ -114,20 +113,12 @@ def _extract_contact(html: str, company_domain: str) -> dict | None:
 
 
 def _scrape_html(job_url: str) -> str:
-    """Fetch page HTML: static first, Playwright fallback."""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
-    try:
-        resp = requests.get(job_url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            return resp.text
-    except Exception as e:
-        logger.debug(f"Static fetch failed for {job_url}: {e}")
-
+    """TheHub is React/Next.js — always use Playwright so JS has rendered."""
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(job_url, wait_until="networkidle", timeout=20000)
+            page.goto(job_url, wait_until="networkidle", timeout=25000)
             page.wait_for_timeout(1500)
             html = page.content()
             browser.close()
