@@ -4,14 +4,13 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_BASE = "https://generativelanguage.googleapis.com"
 PREFERRED_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro-latest",
-    "gemini-pro",
+    "gemini-2.0-flash-001",
 ]
 
 PROMPT_TEMPLATE = """You are a business development assistant. Given this company and job listing, assess whether this company is a good prospect for a software development outsourcing firm.
@@ -27,51 +26,44 @@ Respond with JSON only:
 }}"""
 
 
-def _detect_model(api_key: str) -> str | None:
-    """Query the API for available models, then pick the best flash/pro variant."""
-    try:
-        resp = requests.get(
-            f"{GEMINI_BASE}",
-            params={"key": api_key},
-            timeout=10,
-        )
-        if resp.status_code == 403:
-            logger.error(f"Gemini key rejected (403) — check your API key is correct.")
-            return None
+def _detect_model(api_key: str) -> tuple[str, str] | tuple[None, None]:
+    """Try each preferred model on v1 then v1beta. Return (model, api_version)."""
+    test_payload = {"contents": [{"parts": [{"text": "Say OK"}]}]}
 
-        resp.raise_for_status()
-        available = [m["name"].replace("models/", "") for m in resp.json().get("models", [])
-                     if "generateContent" in m.get("supportedGenerationMethods", [])]
+    for version in ("v1", "v1beta"):
+        for model in PREFERRED_MODELS:
+            url = f"{GEMINI_BASE}/{version}/models/{model}:generateContent"
+            try:
+                resp = requests.post(url, params={"key": api_key}, json=test_payload, timeout=10)
+                if resp.status_code == 200:
+                    logger.info(f"Using Gemini model: {model} (API {version})")
+                    return model, version
+                elif resp.status_code == 403:
+                    logger.error(f"Gemini key rejected (403): {resp.text[:200]}")
+                    return None, None
+            except Exception as e:
+                logger.debug(f"Error testing {model} on {version}: {e}")
+                continue
 
-        logger.info(f"Available Gemini models: {available}")
-
-        # Pick best match in preference order
-        for preferred in PREFERRED_MODELS:
-            if preferred in available:
-                logger.info(f"Using Gemini model: {preferred}")
-                return preferred
-
-        # Fall back to first available model that supports generateContent
-        if available:
-            logger.info(f"Using first available model: {available[0]}")
-            return available[0]
-
-        logger.error("No usable Gemini models found for this API key.")
-        return None
-
-    except Exception as e:
-        logger.error(f"Could not list Gemini models: {e}")
-        return None
+    logger.error(
+        "\n\n*** Could not connect to Gemini. All models failed.\n"
+        "To fix:\n"
+        "1. Go to https://aistudio.google.com/app/apikey\n"
+        "2. Create a NEW API key\n"
+        "3. Open config.env in Notepad and replace GEMINI_API_KEY with the new key\n"
+        "4. Re-run the script ***\n"
+    )
+    return None, None
 
 
-def score_company(company: dict, api_key: str, model: str) -> dict | None:
+def score_company(company: dict, api_key: str, model: str, api_version: str) -> dict | None:
     prompt = PROMPT_TEMPLATE.format(
         company_name=company["company_name"],
         job_title=company["job_title"],
         job_snippet=company["description"],
     )
 
-    url = f"{GEMINI_BASE}/{model}:generateContent"
+    url = f"{GEMINI_BASE}/{api_version}/models/{model}:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2},
@@ -106,20 +98,13 @@ def score_company(company: dict, api_key: str, model: str) -> dict | None:
 
 
 def filter_and_score(companies: list[dict], gemini_api_key: str) -> list[dict]:
-    model = _detect_model(gemini_api_key)
+    model, api_version = _detect_model(gemini_api_key)
     if not model:
-        logger.error(
-            "\n\n*** Gemini API key problem. To fix:\n"
-            "1. Go to https://aistudio.google.com/app/apikey\n"
-            "2. Create a NEW API key\n"
-            "3. Open config.env in Notepad and replace GEMINI_API_KEY with the new key\n"
-            "4. Re-run the script ***\n"
-        )
         return []
 
     qualified = []
     for company in companies:
-        result = score_company(company, gemini_api_key, model)
+        result = score_company(company, gemini_api_key, model, api_version)
         if result is None:
             logger.warning(f"Skipping {company['company_name']} — scoring failed.")
             continue
