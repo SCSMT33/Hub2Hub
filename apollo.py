@@ -18,7 +18,6 @@ def find_contact(company_name: str, domain: str, api_key: str) -> dict:
     # Search by domain if available, otherwise fall back to company name
     if domain:
         payload = {
-            "api_key": api_key,
             "person_titles": TARGET_TITLES,
             "organization_domains": [domain],
             "page": 1,
@@ -27,7 +26,6 @@ def find_contact(company_name: str, domain: str, api_key: str) -> dict:
         search_label = domain
     elif company_name:
         payload = {
-            "api_key": api_key,
             "person_titles": TARGET_TITLES,
             "q_organization_name": company_name,
             "page": 1,
@@ -38,7 +36,12 @@ def find_contact(company_name: str, domain: str, api_key: str) -> dict:
         return _not_found()
 
     try:
-        resp = requests.post(APOLLO_URL, json=payload, timeout=15)
+        resp = requests.post(
+            APOLLO_URL,
+            json=payload,
+            headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
+            timeout=15,
+        )
         resp.raise_for_status()
         data = resp.json()
 

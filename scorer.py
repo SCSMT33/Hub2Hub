@@ -13,7 +13,13 @@ PREFERRED_MODELS = [
     "gemini-2.0-flash-001",
 ]
 
-PROMPT_TEMPLATE = """You are a business development assistant. Given this company and job listing, assess whether this company is a good prospect for a software development outsourcing firm.
+PROMPT_TEMPLATE = """You are a business development assistant. Assess whether this company is a good prospect for a software development outsourcing firm.
+
+Scoring rules:
+- Score "high" or "medium" if the company is hiring for ANY technical or engineering role related to code development (e.g. backend, frontend, full-stack, mobile, DevOps, QA, SRE, CTO, VP Engineering, lead developer, software engineer, etc.)
+- Score "low" and disqualify immediately if the company operates in the gaming industry (video games, game studios, esports, gambling)
+- Score "low" if the role has no relation to software development
+- A CTO hire is always high score — it signals major tech investment
 
 Company: {company_name}
 Hiring for: {job_title}
