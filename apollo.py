@@ -1,9 +1,10 @@
 import logging
+import time
 import requests
 
 logger = logging.getLogger(__name__)
 
-APOLLO_URL = "https://api.apollo.io/v1/mixed_people/search"
+APOLLO_URL = "https://api.apollo.io/v1/people/search"
 TARGET_TITLES = [
     "CTO",
     "VP Engineering",
@@ -15,7 +16,6 @@ TARGET_TITLES = [
 
 
 def find_contact(company_name: str, domain: str, api_key: str) -> dict:
-    # Search by domain if available, otherwise fall back to company name
     if domain:
         payload = {
             "person_titles": TARGET_TITLES,
@@ -79,12 +79,20 @@ def _not_found() -> dict:
     }
 
 
-def enrich_contacts(companies: list[dict], api_key: str) -> list[dict]:
-    for company in companies:
+def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) -> list[dict]:
+    # In dry-run mode, only call Apollo for the first company to save credits
+    for i, company in enumerate(companies):
+        if dry_run and i >= 1:
+            company["contact"] = _not_found()
+            logger.info(f"Apollo [skipped — dry run]: {company['company_name']}")
+            continue
+
         domain = company.get("domain", "")
         name = company.get("company_name", "")
         contact = find_contact(name, domain, api_key)
         company["contact"] = contact
         status = "found" if contact["found"] else "not found"
         logger.info(f"Apollo [{status}]: {name}")
+        time.sleep(1)
+
     return companies

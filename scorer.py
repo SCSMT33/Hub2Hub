@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import requests
 
 logger = logging.getLogger(__name__)
@@ -76,8 +77,18 @@ def score_company(company: dict, api_key: str, model: str, api_version: str) -> 
     }
 
     try:
-        resp = requests.post(url, params={"key": api_key}, json=payload, timeout=20)
-        resp.raise_for_status()
+        for attempt in range(3):
+            resp = requests.post(url, params={"key": api_key}, json=payload, timeout=20)
+            if resp.status_code == 503:
+                wait = 5 * (attempt + 1)
+                logger.warning(f"Gemini 503 for {company['company_name']}, retrying in {wait}s...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            logger.error(f"Gemini still unavailable after 3 attempts for {company['company_name']}")
+            return None
         raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
         if raw.startswith("```"):
