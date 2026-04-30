@@ -29,20 +29,34 @@ Respond with JSON only:
 
 def _detect_model(api_key: str) -> str | None:
     """Try each preferred model and return the first one that responds."""
+    last_status = None
+    last_body = ""
     for model in PREFERRED_MODELS:
         url = f"{GEMINI_BASE}/{model}:generateContent"
         test_payload = {"contents": [{"parts": [{"text": "Say OK"}]}]}
         try:
             resp = requests.post(url, params={"key": api_key}, json=test_payload, timeout=10)
+            last_status = resp.status_code
+            last_body = resp.text[:300]
             if resp.status_code == 200:
                 logger.info(f"Using Gemini model: {model}")
                 return model
             elif resp.status_code == 403:
-                # Key is valid but access denied — no point trying others
-                logger.error("Gemini API key rejected (403). Check that the Generative Language API is enabled.")
+                logger.error(f"Gemini key rejected (403): {last_body}")
                 return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Gemini connection error: {e}")
             continue
+
+    logger.error(
+        f"\n\n*** Gemini API key problem (last status: {last_status}).\n"
+        f"Last response: {last_body}\n\n"
+        "To fix:\n"
+        "1. Go to https://aistudio.google.com/app/apikey\n"
+        "2. Create a NEW API key\n"
+        "3. Open config.env in Notepad and replace GEMINI_API_KEY with the new key\n"
+        "4. Re-run the script ***\n"
+    )
     return None
 
 
