@@ -25,7 +25,7 @@ def run_onboarding(dry_run: bool = False):
     owner_id = ""
     if not dry_run:
         hubspot_key = input("Enter your HubSpot API key: ").strip()
-        owner_id = input("Enter Jan's HubSpot Owner ID (the number from HubSpot): ").strip()
+        owner_id = input("Enter Jan's HubSpot Owner ID [50983759]: ").strip() or "50983759"
 
     with open(CONFIG_FILE, "w") as f:
         f.write(f"GEMINI_API_KEY={gemini_key}\n")
