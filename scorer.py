@@ -28,36 +28,40 @@ Respond with JSON only:
 
 
 def _detect_model(api_key: str) -> str | None:
-    """Try each preferred model and return the first one that responds."""
-    last_status = None
-    last_body = ""
-    for model in PREFERRED_MODELS:
-        url = f"{GEMINI_BASE}/{model}:generateContent"
-        test_payload = {"contents": [{"parts": [{"text": "Say OK"}]}]}
-        try:
-            resp = requests.post(url, params={"key": api_key}, json=test_payload, timeout=10)
-            last_status = resp.status_code
-            last_body = resp.text[:300]
-            if resp.status_code == 200:
-                logger.info(f"Using Gemini model: {model}")
-                return model
-            elif resp.status_code == 403:
-                logger.error(f"Gemini key rejected (403): {last_body}")
-                return None
-        except Exception as e:
-            logger.error(f"Gemini connection error: {e}")
-            continue
+    """Query the API for available models, then pick the best flash/pro variant."""
+    try:
+        resp = requests.get(
+            f"{GEMINI_BASE}",
+            params={"key": api_key},
+            timeout=10,
+        )
+        if resp.status_code == 403:
+            logger.error(f"Gemini key rejected (403) — check your API key is correct.")
+            return None
 
-    logger.error(
-        f"\n\n*** Gemini API key problem (last status: {last_status}).\n"
-        f"Last response: {last_body}\n\n"
-        "To fix:\n"
-        "1. Go to https://aistudio.google.com/app/apikey\n"
-        "2. Create a NEW API key\n"
-        "3. Open config.env in Notepad and replace GEMINI_API_KEY with the new key\n"
-        "4. Re-run the script ***\n"
-    )
-    return None
+        resp.raise_for_status()
+        available = [m["name"].replace("models/", "") for m in resp.json().get("models", [])
+                     if "generateContent" in m.get("supportedGenerationMethods", [])]
+
+        logger.info(f"Available Gemini models: {available}")
+
+        # Pick best match in preference order
+        for preferred in PREFERRED_MODELS:
+            if preferred in available:
+                logger.info(f"Using Gemini model: {preferred}")
+                return preferred
+
+        # Fall back to first available model that supports generateContent
+        if available:
+            logger.info(f"Using first available model: {available[0]}")
+            return available[0]
+
+        logger.error("No usable Gemini models found for this API key.")
+        return None
+
+    except Exception as e:
+        logger.error(f"Could not list Gemini models: {e}")
+        return None
 
 
 def score_company(company: dict, api_key: str, model: str) -> dict | None:
