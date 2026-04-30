@@ -1,5 +1,6 @@
 import re
 import logging
+from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -88,17 +89,43 @@ def _extract_contacts_from_html(html: str) -> dict | None:
     }
 
 
-def scrape_contact_from_job_page(job_url: str) -> dict | None:
-    """Try requests first (fast), fall back to Playwright for JS-rendered pages."""
+def _extract_domain_from_html(html: str, job_url: str) -> str:
+    """Extract company website domain from a TheHub job page."""
+    soup = BeautifulSoup(html, "lxml")
+    hub_host = urlparse(job_url).netloc  # e.g. thehub.io
+
+    # Look for external links that aren't thehub.io itself
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"]
+        if not href.startswith("http"):
+            continue
+        parsed = urlparse(href)
+        host = parsed.netloc.lower().lstrip("www.")
+        if host and hub_host not in host and "linkedin.com" not in host and "facebook.com" not in host:
+            return host  # return bare domain e.g. "example.com"
+
+    return ""
+
+
+def scrape_contact_and_domain_from_job_page(job_url: str) -> tuple[dict | None, str]:
+    """
+    Visit a TheHub job page once and return (contact_dict_or_None, domain_string).
+    Tries static fetch first, falls back to Playwright.
+    """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
 
     try:
         resp = requests.get(job_url, headers=headers, timeout=10)
         if resp.status_code == 200:
-            result = _extract_contacts_from_html(resp.text)
-            if result:
-                logger.info(f"Found contact on job page (static): {result['email']}")
-                return result
+            html = resp.text
+            contact = _extract_contacts_from_html(html)
+            domain = _extract_domain_from_html(html, job_url)
+            if contact:
+                logger.info(f"Found contact on job page (static): {contact['email']}")
+            if domain:
+                logger.info(f"Found domain on job page (static): {domain}")
+            if contact or domain:
+                return contact, domain
     except Exception as e:
         logger.debug(f"Static fetch failed for {job_url}: {e}")
 
@@ -112,11 +139,20 @@ def scrape_contact_from_job_page(job_url: str) -> dict | None:
             html = page.content()
             browser.close()
 
-        result = _extract_contacts_from_html(html)
-        if result:
-            logger.info(f"Found contact on job page (JS): {result['email']}")
-        return result
+        contact = _extract_contacts_from_html(html)
+        domain = _extract_domain_from_html(html, job_url)
+        if contact:
+            logger.info(f"Found contact on job page (JS): {contact['email']}")
+        if domain:
+            logger.info(f"Found domain on job page (JS): {domain}")
+        return contact, domain
 
     except Exception as e:
         logger.debug(f"Playwright fetch failed for {job_url}: {e}")
-        return None
+        return None, ""
+
+
+def scrape_contact_from_job_page(job_url: str) -> dict | None:
+    """Kept for compatibility — returns only the contact dict."""
+    contact, _ = scrape_contact_and_domain_from_job_page(job_url)
+    return contact

@@ -2,7 +2,7 @@ import logging
 import time
 import requests
 
-from page_contacts import scrape_contact_from_job_page
+from page_contacts import scrape_contact_and_domain_from_job_page
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,16 @@ def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) 
             continue
 
         # Step 1: try scraping the job page directly (free, no credits)
+        # Also extract company domain in the same page visit
         job_url = company.get("job_url", "")
         contact = None
         if job_url:
-            contact = scrape_contact_from_job_page(job_url)
+            contact, scraped_domain = scrape_contact_and_domain_from_job_page(job_url)
+            if scraped_domain and not company.get("domain"):
+                company["domain"] = scraped_domain
+                logger.info(f"Domain from job page: {scraped_domain}")
 
-        # Step 2: fall back to Hunter.io
+        # Step 2: fall back to Hunter.io (now with better domain coverage)
         if not contact:
             if api_key:
                 domain = company.get("domain", "")
