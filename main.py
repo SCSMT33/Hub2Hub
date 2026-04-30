@@ -36,10 +36,10 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
     print(f"{ts()} {len(qualified)} passed AI scoring")
 
-    if cfg.get("APOLLO_API_KEY"):
-        enriched = enrich_contacts(qualified, cfg["APOLLO_API_KEY"], dry_run=dry_run)
+    if cfg.get("HUNTER_API_KEY"):
+        enriched = enrich_contacts(qualified, cfg["HUNTER_API_KEY"], dry_run=dry_run)
         contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
-        print(f"{ts()} {contacts_found} contacts found via Apollo")
+        print(f"{ts()} {contacts_found} contacts found via Hunter.io")
     else:
         enriched = qualified
         print(f"{ts()} Apollo skipped (no key provided)")

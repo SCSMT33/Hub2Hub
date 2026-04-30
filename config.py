@@ -11,15 +11,15 @@ def run_onboarding(dry_run: bool = False):
     print("Let's get you set up. You'll only need to do this once.\n")
 
     if dry_run:
-        print("(Dry-run mode: HubSpot and Apollo keys are optional — press Enter to skip)\n")
+        print("(Dry-run mode: HubSpot and Hunter keys are optional — press Enter to skip)\n")
 
     gemini_key = input("Enter your Gemini API key: ").strip()
 
-    apollo_key = ""
+    hunter_key = ""
     if not dry_run:
-        apollo_key = input("Enter your Apollo API key: ").strip()
+        hunter_key = input("Enter your Hunter.io API key: ").strip()
     else:
-        apollo_key = input("Enter your Apollo API key (or press Enter to skip): ").strip()
+        hunter_key = input("Enter your Hunter.io API key (or press Enter to skip): ").strip()
 
     hubspot_key = ""
     owner_id = ""
@@ -29,7 +29,7 @@ def run_onboarding(dry_run: bool = False):
 
     with open(CONFIG_FILE, "w") as f:
         f.write(f"GEMINI_API_KEY={gemini_key}\n")
-        f.write(f"APOLLO_API_KEY={apollo_key}\n")
+        f.write(f"HUNTER_API_KEY={hunter_key}\n")
         f.write(f"HUBSPOT_API_KEY={hubspot_key}\n")
         f.write(f"HUBSPOT_OWNER_ID={owner_id}\n")
 
@@ -42,9 +42,8 @@ def load_config(dry_run: bool = False):
 
     load_dotenv(CONFIG_FILE)
 
-    # In dry-run mode only Gemini is required
     always_required = ["GEMINI_API_KEY"]
-    live_required = ["HUBSPOT_API_KEY", "APOLLO_API_KEY", "GEMINI_API_KEY", "HUBSPOT_OWNER_ID"]
+    live_required = ["HUBSPOT_API_KEY", "HUNTER_API_KEY", "GEMINI_API_KEY", "HUBSPOT_OWNER_ID"]
 
     required = always_required if dry_run else live_required
     missing = [k for k in required if not os.getenv(k)]
@@ -55,7 +54,7 @@ def load_config(dry_run: bool = False):
 
     return {
         "HUBSPOT_API_KEY": os.getenv("HUBSPOT_API_KEY", ""),
-        "APOLLO_API_KEY": os.getenv("APOLLO_API_KEY", ""),
+        "HUNTER_API_KEY": os.getenv("HUNTER_API_KEY", ""),
         "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY"),
         "HUBSPOT_OWNER_ID": os.getenv("HUBSPOT_OWNER_ID", ""),
     }

@@ -4,67 +4,75 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-APOLLO_URL = "https://api.apollo.io/v1/people/search"
-TARGET_TITLES = [
-    "CTO",
-    "VP Engineering",
-    "Head of Engineering",
-    "VP Technology",
-    "Co-Founder",
-    "Head of Technology",
+HUNTER_URL = "https://api.hunter.io/v2/domain-search"
+
+PRIORITY_TITLES = [
+    "cto", "chief technology officer",
+    "vp engineering", "vice president engineering",
+    "head of engineering", "head of technology",
+    "vp technology", "vice president technology",
+    "co-founder", "cofounder",
+    "founder",
+    "lead developer", "lead engineer",
+    "engineering manager",
 ]
 
 
+def _score_title(title: str) -> int:
+    """Return priority score for a contact title — higher is better."""
+    if not title:
+        return 0
+    t = title.lower()
+    for i, keyword in enumerate(PRIORITY_TITLES):
+        if keyword in t:
+            return len(PRIORITY_TITLES) - i
+    return 0
+
+
 def find_contact(company_name: str, domain: str, api_key: str) -> dict:
+    params = {"api_key": api_key, "limit": 10}
+
     if domain:
-        payload = {
-            "person_titles": TARGET_TITLES,
-            "organization_domains": [domain],
-            "page": 1,
-            "per_page": 1,
-        }
+        params["domain"] = domain
         search_label = domain
     elif company_name:
-        payload = {
-            "person_titles": TARGET_TITLES,
-            "q_organization_name": company_name,
-            "page": 1,
-            "per_page": 1,
-        }
+        params["company"] = company_name
         search_label = company_name
     else:
         return _not_found()
 
     try:
-        resp = requests.post(
-            APOLLO_URL,
-            json=payload,
-            headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        resp = requests.get(HUNTER_URL, params=params, timeout=15)
 
-        people = data.get("people", [])
-        if not people:
-            logger.info(f"No contact found for: {search_label}")
+        if resp.status_code == 429:
+            logger.warning("Hunter.io rate limit hit — skipping contact lookup.")
             return _not_found()
 
-        person = people[0]
+        resp.raise_for_status()
+        data = resp.json().get("data", {})
+        emails = data.get("emails", [])
+
+        if not emails:
+            logger.info(f"No contacts found by Hunter for: {search_label}")
+            return _not_found()
+
+        # Pick the best match by title priority
+        best = max(emails, key=lambda e: _score_title(e.get("position", "")))
+
         return {
             "found": True,
-            "first_name": person.get("first_name", ""),
-            "last_name": person.get("last_name", ""),
-            "email": person.get("email", ""),
-            "title": person.get("title", ""),
-            "linkedin_url": person.get("linkedin_url", ""),
+            "first_name": best.get("first_name", ""),
+            "last_name": best.get("last_name", ""),
+            "email": best.get("value", ""),
+            "title": best.get("position", ""),
+            "linkedin_url": best.get("linkedin", ""),
         }
 
     except requests.HTTPError as e:
-        logger.error(f"Apollo HTTP error for {search_label}: {e} — {resp.text[:200]}")
+        logger.error(f"Hunter HTTP error for {search_label}: {e} — {resp.text[:200]}")
         return _not_found()
     except Exception as e:
-        logger.error(f"Apollo error for {search_label}: {e}")
+        logger.error(f"Hunter error for {search_label}: {e}")
         return _not_found()
 
 
@@ -80,11 +88,10 @@ def _not_found() -> dict:
 
 
 def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) -> list[dict]:
-    # In dry-run mode, only call Apollo for the first company to save credits
     for i, company in enumerate(companies):
         if dry_run and i >= 1:
             company["contact"] = _not_found()
-            logger.info(f"Apollo [skipped — dry run]: {company['company_name']}")
+            logger.info(f"Hunter [skipped — dry run]: {company['company_name']}")
             continue
 
         domain = company.get("domain", "")
@@ -92,7 +99,7 @@ def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) 
         contact = find_contact(name, domain, api_key)
         company["contact"] = contact
         status = "found" if contact["found"] else "not found"
-        logger.info(f"Apollo [{status}]: {name}")
+        logger.info(f"Hunter [{status}]: {name}")
         time.sleep(1)
 
     return companies
