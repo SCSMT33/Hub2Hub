@@ -45,13 +45,17 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
         print(f"{ts()} Apollo skipped (no key provided)")
 
     if dry_run:
-        print(f"\n{ts()} DRY RUN — showing what would be pushed to HubSpot:\n")
+        preview = enriched[:1]
+        print(f"\n{ts()} DRY RUN — pushing 1 lead to HubSpot as a test:\n")
         print("=" * 60)
-        for company in enriched:
-            dry_run_preview(company)
+        dry_run_preview(preview[0])
         print("=" * 60)
-        print(f"\n{ts()} Dry run complete. {len(enriched)} leads ready.")
-        print(f"{ts()} Add your HubSpot key to config.env and run without --dry-run to go live.")
+        if cfg.get("HUBSPOT_API_KEY"):
+            pushed = push_to_hubspot(preview, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+            print(f"\n{ts()} {pushed} test record pushed to HubSpot.")
+        else:
+            print(f"\n{ts()} No HubSpot key — skipping push.")
+        print(f"{ts()} Run without --dry-run to process all {len(enriched)} leads.")
     else:
         pushed = push_to_hubspot(enriched, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
         print(f"{ts()} {pushed} records pushed to HubSpot")
