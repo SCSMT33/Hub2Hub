@@ -83,7 +83,7 @@ def _scrape_page(page, url: str) -> list[dict]:
     return jobs
 
 
-def scrape_jobs() -> list[dict]:
+def scrape_jobs(ignore_seen: bool = False) -> list[dict]:
     seen = _load_seen()
     today = str(date.today())
     results = []
@@ -112,12 +112,13 @@ def scrape_jobs() -> list[dict]:
 
             for job in jobs:
                 company = job["company_name"].strip().lower()
-                if seen.get(company) == today:
+                if not ignore_seen and seen.get(company) == today:
                     continue
                 if company in seen_companies_this_run:
                     continue
                 seen_companies_this_run.add(company)
-                seen[company] = today
+                if not ignore_seen:
+                    seen[company] = today
                 results.append(job)
 
             # Check for next page

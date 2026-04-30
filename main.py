@@ -26,7 +26,8 @@ def ts() -> str:
 def run_pipeline(cfg: dict, dry_run: bool = False):
     print(f"{ts()} Starting TheHub scrape...")
 
-    companies = scrape_jobs()
+    # dry-run ignores the seen-today filter so you can re-test the same companies
+    companies = scrape_jobs(ignore_seen=dry_run)
     print(f"{ts()} Found {len(companies)} companies")
 
     if not companies:
