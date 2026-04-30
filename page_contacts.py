@@ -67,7 +67,7 @@ def _extract_contacts_from_html(html: str) -> dict | None:
 
     # Try to extract name from context — look for "Name, Title" patterns
     name_match = re.search(
-        r"([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)[,\s]+([A-Z][^\n,]{3,50})",
+        r"([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)[,\s]+([A-Z][\w\s&/]{2,45})",
         best["context"]
     )
     first_name, last_name, title = "", "", ""
@@ -76,7 +76,9 @@ def _extract_contacts_from_html(html: str) -> dict | None:
         parts = full_name.split()
         first_name = parts[0]
         last_name = " ".join(parts[1:])
-        title = name_match.group(2).strip()[:80]
+        # Stop title at double-space (section boundary) or punctuation delimiters
+        raw_title = name_match.group(2)
+        title = re.split(r"\s{2,}|[|•·–—]", raw_title)[0].strip()[:60]
 
     return {
         "found": True,
@@ -89,20 +91,33 @@ def _extract_contacts_from_html(html: str) -> dict | None:
     }
 
 
+_NOISE_DOMAINS = {
+    "linkedin.com", "facebook.com", "twitter.com", "x.com", "instagram.com",
+    "youtube.com", "google.com", "googleapis.com", "gstatic.com", "gravatar.com",
+    "apple.com", "cloudflare.com", "fonts.googleapis.com", "schema.org",
+    "w3.org", "github.com", "crunchbase.com", "angel.co", "wellfound.com",
+    "glassdoor.com", "indeed.com", "workable.com", "lever.co", "greenhouse.io",
+}
+
+
 def _extract_domain_from_html(html: str, job_url: str) -> str:
     """Extract company website domain from a TheHub job page."""
     soup = BeautifulSoup(html, "lxml")
     hub_host = urlparse(job_url).netloc  # e.g. thehub.io
 
-    # Look for external links that aren't thehub.io itself
     for tag in soup.find_all("a", href=True):
         href = tag["href"]
         if not href.startswith("http"):
             continue
         parsed = urlparse(href)
-        host = parsed.netloc.lower().lstrip("www.")
-        if host and hub_host not in host and "linkedin.com" not in host and "facebook.com" not in host:
-            return host  # return bare domain e.g. "example.com"
+        host = parsed.netloc.lower()
+        bare = host.lstrip("www.")
+        if not bare or bare == hub_host:
+            continue
+        # Skip noise: social, analytics, job boards, CDNs
+        if any(bare == nd or bare.endswith("." + nd) for nd in _NOISE_DOMAINS):
+            continue
+        return bare  # e.g. "example.com"
 
     return ""
 
@@ -114,22 +129,27 @@ def scrape_contact_and_domain_from_job_page(job_url: str) -> tuple[dict | None, 
     """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
 
+    static_contact = None
+    static_domain = ""
+
     try:
         resp = requests.get(job_url, headers=headers, timeout=10)
         if resp.status_code == 200:
             html = resp.text
-            contact = _extract_contacts_from_html(html)
-            domain = _extract_domain_from_html(html, job_url)
-            if contact:
-                logger.info(f"Found contact on job page (static): {contact['email']}")
-            if domain:
-                logger.info(f"Found domain on job page (static): {domain}")
-            if contact or domain:
-                return contact, domain
+            static_contact = _extract_contacts_from_html(html)
+            static_domain = _extract_domain_from_html(html, job_url)
+            if static_contact:
+                logger.info(f"Found contact on job page (static): {static_contact['email']}")
+            if static_domain:
+                logger.info(f"Found domain on job page (static): {static_domain}")
     except Exception as e:
         logger.debug(f"Static fetch failed for {job_url}: {e}")
 
-    # Fall back to Playwright for JS-rendered content
+    # If we have both contact and domain from static fetch, we're done
+    if static_contact and static_domain:
+        return static_contact, static_domain
+
+    # Fall back to Playwright — JS pages usually have more data
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -139,17 +159,19 @@ def scrape_contact_and_domain_from_job_page(job_url: str) -> tuple[dict | None, 
             html = page.content()
             browser.close()
 
-        contact = _extract_contacts_from_html(html)
-        domain = _extract_domain_from_html(html, job_url)
-        if contact:
-            logger.info(f"Found contact on job page (JS): {contact['email']}")
-        if domain:
-            logger.info(f"Found domain on job page (JS): {domain}")
-        return contact, domain
+        js_contact = _extract_contacts_from_html(html)
+        js_domain = _extract_domain_from_html(html, job_url)
+        if js_contact:
+            logger.info(f"Found contact on job page (JS): {js_contact['email']}")
+        if js_domain:
+            logger.info(f"Found domain on job page (JS): {js_domain}")
+
+        # Prefer JS results but fall back to whatever static found
+        return (js_contact or static_contact), (js_domain or static_domain)
 
     except Exception as e:
         logger.debug(f"Playwright fetch failed for {job_url}: {e}")
-        return None, ""
+        return static_contact, static_domain
 
 
 def scrape_contact_from_job_page(job_url: str) -> dict | None:
