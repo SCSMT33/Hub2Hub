@@ -58,8 +58,15 @@ def find_contact(company_name: str, domain: str, api_key: str) -> dict:
             logger.info(f"No contacts found by Hunter for: {search_label}")
             return _not_found()
 
-        # Pick the best match by title priority
-        best = max(emails, key=lambda e: _score_title(e.get("position", "")))
+        # Only return a contact if they match a priority title
+        scored = [(e, _score_title(e.get("position", ""))) for e in emails]
+        scored = [(e, s) for e, s in scored if s > 0]
+
+        if not scored:
+            logger.info(f"No priority-title contact found at: {search_label}")
+            return _not_found()
+
+        best = max(scored, key=lambda x: x[1])[0]
 
         return {
             "found": True,

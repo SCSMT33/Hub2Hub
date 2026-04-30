@@ -35,7 +35,32 @@ class HubSpotClient:
             logger.error(f"HubSpot error {path}: {e}")
             return None
 
+    def _search(self, object_type: str, filter_property: str, value: str) -> str | None:
+        """Return existing record ID if found, else None."""
+        payload = {
+            "filterGroups": [{"filters": [{"propertyName": filter_property, "operator": "EQ", "value": value}]}],
+            "limit": 1,
+        }
+        try:
+            resp = requests.post(
+                f"{HUBSPOT_BASE}/crm/v3/objects/{object_type}/search",
+                json=payload,
+                headers=self.headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            return results[0]["id"] if results else None
+        except Exception:
+            return None
+
     def create_company(self, company: dict) -> str | None:
+        # Dedup by name — skip if already exists
+        existing = self._search("companies", "name", company["company_name"])
+        if existing:
+            logger.info(f"Company already in HubSpot, skipping: {company['company_name']}")
+            return existing
+
         note = f"Source: TheHub.io — hiring {company['job_title']}"
         payload = {
             "properties": {
@@ -51,6 +76,13 @@ class HubSpotClient:
         return None
 
     def create_contact(self, contact: dict, company_id: str | None) -> str | None:
+        # Dedup by email — skip if already exists
+        if contact.get("email"):
+            existing = self._search("contacts", "email", contact["email"])
+            if existing:
+                logger.info(f"Contact already in HubSpot, skipping: {contact['email']}")
+                return existing
+
         payload = {
             "properties": {
                 "firstname": contact["first_name"],
