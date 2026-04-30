@@ -46,7 +46,11 @@ def _extract_contacts_from_html(html: str) -> dict | None:
     candidates = []
     for email in emails:
         local = email.split("@")[0].lower()
+        domain_part = email.split("@")[1].lower() if "@" in email else ""
         if any(x in local for x in ["noreply", "no-reply", "info", "support", "hello", "contact", "jobs", "career"]):
+            continue
+        # Skip emails from third-party vendors whose widgets appear on many pages
+        if any(domain_part == nd or domain_part.endswith("." + nd) for nd in _NOISE_DOMAINS):
             continue
 
         # Find surrounding text (200 chars around email) to get name/title
@@ -92,18 +96,32 @@ def _extract_contacts_from_html(html: str) -> dict | None:
 
 
 _NOISE_DOMAINS = {
+    # Social
     "linkedin.com", "facebook.com", "twitter.com", "x.com", "instagram.com",
-    "youtube.com", "google.com", "googleapis.com", "gstatic.com", "gravatar.com",
+    "youtube.com", "tiktok.com",
+    # Google / analytics
+    "google.com", "googleapis.com", "gstatic.com", "googletagmanager.com",
+    "doubleclick.net", "gravatar.com",
+    # Cookie consent & privacy vendors — these widgets embed on job pages
+    "cookieinformation.com", "cookiebot.com", "onetrust.com", "trustarc.com",
+    "cookiepro.com", "consentmanager.net",
+    # Infra / CDN
     "apple.com", "cloudflare.com", "fonts.googleapis.com", "schema.org",
-    "w3.org", "github.com", "crunchbase.com", "angel.co", "wellfound.com",
-    "glassdoor.com", "indeed.com", "workable.com", "lever.co", "greenhouse.io",
+    "w3.org", "jsdelivr.net", "unpkg.com",
+    # Dev platforms
+    "github.com", "gitlab.com",
+    # Business directories
+    "crunchbase.com", "angel.co", "wellfound.com", "glassdoor.com",
+    "indeed.com", "workable.com", "lever.co", "greenhouse.io",
+    "ashbyhq.com", "recruitee.com", "teamtailor.com",
+    # TheHub itself (catches insights.thehub.io etc.)
+    "thehub.io",
 }
 
 
 def _extract_domain_from_html(html: str, job_url: str) -> str:
     """Extract company website domain from a TheHub job page."""
     soup = BeautifulSoup(html, "lxml")
-    hub_host = urlparse(job_url).netloc  # e.g. thehub.io
 
     for tag in soup.find_all("a", href=True):
         href = tag["href"]
@@ -111,10 +129,10 @@ def _extract_domain_from_html(html: str, job_url: str) -> str:
             continue
         parsed = urlparse(href)
         host = parsed.netloc.lower()
-        bare = host.lstrip("www.")
-        if not bare or bare == hub_host:
+        bare = host.removeprefix("www.")
+        if not bare:
             continue
-        # Skip noise: social, analytics, job boards, CDNs
+        # Skip known noise domains and all their subdomains
         if any(bare == nd or bare.endswith("." + nd) for nd in _NOISE_DOMAINS):
             continue
         return bare  # e.g. "example.com"
