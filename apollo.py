@@ -93,7 +93,7 @@ def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) 
     for i, company in enumerate(companies):
         name = company.get("company_name", "")
 
-        if dry_run and i >= 1:
+        if dry_run and i >= 3:
             company["contact"] = _not_found()
             logger.info(f"Contact lookup [skipped — dry run]: {name}")
             continue
