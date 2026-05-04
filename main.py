@@ -66,24 +66,22 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
     print(f"{ts()} {len(qualified)} passed AI scoring")
 
-    if cfg.get("HUNTER_API_KEY"):
-        enriched = enrich_contacts(qualified, cfg["HUNTER_API_KEY"], dry_run=dry_run)
-        contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
-        print(f"{ts()} {contacts_found} contacts found via Hunter.io")
-    else:
-        enriched = qualified
-        print(f"{ts()} Apollo skipped (no key provided)")
+    enriched = enrich_contacts(qualified, dry_run=dry_run)
+    contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
+    print(f"{ts()} {contacts_found} contacts found on job pages")
 
     if dry_run:
-        # Push only the first company+contact found to HubSpot as a live test
-        first = enriched[0] if enriched else None
-        if first and cfg.get("HUBSPOT_API_KEY"):
-            print(f"\n{ts()} Pushing first lead to HubSpot as test: {first['company_name']}")
-            pushed = push_to_hubspot([first], cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+        # Push the first company that has a real contact found
+        target = next((c for c in enriched if c.get("contact", {}).get("found")), None)
+        if target and cfg.get("HUBSPOT_API_KEY"):
+            print(f"\n{ts()} Pushing to HubSpot: {target['company_name']} — {target['contact']['email']}")
+            pushed = push_to_hubspot([target], cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
             if pushed:
-                print(f"{ts()} HubSpot push OK — check CRM for {first['company_name']}")
+                print(f"{ts()} HubSpot push OK — check CRM for {target['company_name']}")
             else:
                 print(f"{ts()} HubSpot push FAILED — check logs above")
+        elif not target:
+            print(f"\n{ts()} No contacts found on any job page — nothing pushed to HubSpot")
 
         print(f"\n{ts()} DRY RUN — full lead preview:\n")
         print("=" * 60)
