@@ -61,21 +61,23 @@ class HubSpotClient:
             logger.info(f"Company already in HubSpot, skipping: {company['company_name']}")
             return existing
 
+        domain = company.get("domain", "")
         note = f"Source: TheHub.io — hiring {company['job_title']}"
-        payload = {
-            "properties": {
-                "name": company["company_name"],
-                "domain": company.get("domain", ""),
-                "website": company.get("company_website", ""),
-                "description": note,
-            }
+        properties = {
+            "name": company["company_name"],
+            "domain": domain,
+            "website": company.get("company_website", "") or (f"https://{domain}" if domain else ""),
+            "description": note,
         }
-        result = self._post("/crm/v3/objects/companies", payload)
+        if domain.endswith(".dk"):
+            properties["country"] = "Denmark"
+
+        result = self._post("/crm/v3/objects/companies", {"properties": properties})
         if result:
             return result.get("id")
         return None
 
-    def create_contact(self, contact: dict, company_id: str | None) -> str | None:
+    def create_contact(self, contact: dict, company_id: str | None, company: dict | None = None) -> str | None:
         # Dedup by email — skip if already exists
         if contact.get("email"):
             existing = self._search("contacts", "email", contact["email"])
@@ -83,21 +85,25 @@ class HubSpotClient:
                 logger.info(f"Contact already in HubSpot, skipping: {contact['email']}")
                 return existing
 
-        payload = {
-            "properties": {
-                "firstname": contact["first_name"],
-                "lastname": contact["last_name"],
-                "email": contact["email"],
-                "jobtitle": contact["title"],
-                "linkedin_bio": contact["linkedin_url"],
-            }
+        domain = company.get("domain", "") if company else ""
+        properties = {
+            "firstname": contact["first_name"],
+            "lastname": contact["last_name"],
+            "email": contact["email"],
+            "jobtitle": contact["title"],
+            "linkedin_bio": contact["linkedin_url"],
+            "website": f"https://{domain}" if domain else "",
+            "company": company["company_name"] if company else "",
+            "lifecyclestage": "lead",
         }
-        result = self._post("/crm/v3/objects/contacts", payload)
+        if domain.endswith(".dk"):
+            properties["country"] = "Denmark"
+
+        result = self._post("/crm/v3/objects/contacts", {"properties": properties})
         if not result:
             return None
 
         contact_id = result.get("id")
-
         if contact_id and company_id:
             self._associate_contact_company(contact_id, company_id)
 
@@ -177,7 +183,7 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
 
             contact = company.get("contact", {})
             if contact.get("found"):
-                client.create_contact(contact, company_id)
+                client.create_contact(contact, company_id, company=company)
 
             pushed += 1
             logger.info(f"Pushed to HubSpot: {company['company_name']}")

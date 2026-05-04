@@ -69,7 +69,17 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
         print(f"{ts()} Apollo skipped (no key provided)")
 
     if dry_run:
-        print(f"\n{ts()} DRY RUN — showing what would be pushed to HubSpot:\n")
+        # Push only the first company+contact found to HubSpot as a live test
+        first = enriched[0] if enriched else None
+        if first and cfg.get("HUBSPOT_API_KEY"):
+            print(f"\n{ts()} Pushing first lead to HubSpot as test: {first['company_name']}")
+            pushed = push_to_hubspot([first], cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+            if pushed:
+                print(f"{ts()} HubSpot push OK — check CRM for {first['company_name']}")
+            else:
+                print(f"{ts()} HubSpot push FAILED — check logs above")
+
+        print(f"\n{ts()} DRY RUN — full lead preview:\n")
         print("=" * 60)
         for company in enriched:
             dry_run_preview(company)

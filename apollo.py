@@ -97,16 +97,17 @@ def _not_found() -> dict:
 
 
 def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) -> list[dict]:
+    # In dry-run: only check the first company, page scrape only (no Hunter credits)
+    limit = 1 if dry_run else len(companies)
+
     for i, company in enumerate(companies):
         name = company.get("company_name", "")
 
-        if dry_run and i >= 3:
+        if i >= limit:
             company["contact"] = _not_found()
-            logger.info(f"Contact lookup [skipped — dry run]: {name}")
+            logger.info(f"Contact lookup [skipped]: {name}")
             continue
 
-        # Step 1: try scraping the job page directly (free, no credits)
-        # Also extract company domain in the same page visit
         job_url = company.get("job_url", "")
         contact = None
         if job_url:
@@ -115,16 +116,17 @@ def enrich_contacts(companies: list[dict], api_key: str, dry_run: bool = False) 
                 company["domain"] = scraped_domain
                 logger.info(f"Domain from job page: {scraped_domain}")
 
-        # Step 2: fall back to Hunter.io (now with better domain coverage)
-        if not contact:
-            if api_key:
+        if contact:
+            logger.info(f"Job page [found]: {name} — {contact['email']}")
+        else:
+            # Only use Hunter in live runs, not dry-run
+            if not dry_run and api_key:
                 domain = company.get("domain", "")
                 contact = find_contact(name, domain, api_key)
                 logger.info(f"Hunter [{'found' if contact['found'] else 'not found'}]: {name}")
             else:
                 contact = _not_found()
-        else:
-            logger.info(f"Job page [found]: {name} — {contact['email']}")
+                logger.info(f"No email found on job page: {name}")
 
         company["contact"] = contact
         time.sleep(1)
