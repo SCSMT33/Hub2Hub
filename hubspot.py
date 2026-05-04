@@ -106,8 +106,43 @@ class HubSpotClient:
         contact_id = result.get("id")
         if contact_id and company_id:
             self._associate_contact_company(contact_id, company_id)
+        if contact_id and company:
+            self._add_note(contact_id, company)
 
         return contact_id
+
+    def _add_note(self, contact_id: str, company: dict):
+        job_url = company.get("job_url", "")
+        if not job_url:
+            return
+        body = (
+            f"Source: TheHub.io\n"
+            f"Job posting: {job_url}\n"
+            f"Hiring for: {company.get('job_title', '')}\n"
+            f"AI Score: {company.get('score', '').upper()} — {company.get('reason', '')}"
+        )
+        payload = {
+            "properties": {
+                "hs_note_body": body,
+                "hs_timestamp": str(int(datetime.now(timezone.utc).timestamp() * 1000)),
+            },
+            "associations": [
+                {
+                    "to": {"id": contact_id},
+                    "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}],
+                }
+            ],
+        }
+        try:
+            resp = requests.post(
+                f"{HUBSPOT_BASE}/crm/v3/objects/notes",
+                json=payload,
+                headers=self.headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning(f"Could not add note to contact {contact_id}: {e}")
 
     def _associate_contact_company(self, contact_id: str, company_id: str):
         payload = {
