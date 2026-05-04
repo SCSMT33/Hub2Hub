@@ -18,12 +18,17 @@ _NOISE_DOMAINS = {
     # Social
     "linkedin.com", "facebook.com", "twitter.com", "x.com", "instagram.com",
     "youtube.com", "tiktok.com",
+    # Microsoft — appears on every TheHub page via SSO/auth links
+    "microsoft.com", "microsoftonline.com", "live.com", "outlook.com",
     # Google / analytics
     "google.com", "googleapis.com", "gstatic.com", "googletagmanager.com",
     "doubleclick.net", "gravatar.com",
     # Cookie consent widgets
     "cookieinformation.com", "cookiebot.com", "onetrust.com", "trustarc.com",
     "cookiepro.com", "consentmanager.net",
+    # Common SaaS embeds that appear on job pages
+    "intercom.com", "intercom.io", "hotjar.com", "segment.com",
+    "stripe.com", "zendesk.com", "hubspot.com", "salesforce.com",
     # Infra / CDN
     "apple.com", "cloudflare.com", "schema.org", "w3.org",
     "jsdelivr.net", "unpkg.com",
@@ -33,7 +38,7 @@ _NOISE_DOMAINS = {
     "crunchbase.com", "angel.co", "wellfound.com", "glassdoor.com",
     "indeed.com", "workable.com", "lever.co", "greenhouse.io",
     "ashbyhq.com", "recruitee.com", "teamtailor.com",
-    # TheHub itself (blocks insights.thehub.io etc.)
+    # TheHub itself
     "thehub.io",
 }
 
@@ -50,17 +55,45 @@ def _title_score(text: str) -> int:
     return 0
 
 
+def _looks_like_website_link(tag) -> bool:
+    """True if the link text or label suggests it's a company website."""
+    text = tag.get_text(strip=True).lower()
+    href = tag.get("href", "")
+    # Link text is itself a domain (e.g. "allgravy.com")
+    if re.match(r"^[\w\-]+\.[a-z]{2,}(/\S*)?$", text):
+        return True
+    # Link text says "website" or similar
+    if any(w in text for w in ["website", "visit site", "our site", "homepage"]):
+        return True
+    # href and link text are the same bare domain
+    bare_href = urlparse(href).netloc.lower().removeprefix("www.")
+    if text and text == bare_href:
+        return True
+    return False
+
+
 def _extract_domain(html: str) -> str:
-    """Return the first external non-noise domain found in page links."""
+    """
+    Extract company website domain from a rendered TheHub job page.
+    Prefers links that look explicitly like a company website;
+    falls back to the first non-noise external link.
+    """
     soup = BeautifulSoup(html, "lxml")
+    fallback = ""
+
     for tag in soup.find_all("a", href=True):
         href = tag["href"]
         if not href.startswith("http"):
             continue
         bare = urlparse(href).netloc.lower().removeprefix("www.")
-        if bare and not _is_noise(bare):
-            return bare
-    return ""
+        if not bare or _is_noise(bare):
+            continue
+        if _looks_like_website_link(tag):
+            return bare          # confident match — use immediately
+        if not fallback:
+            fallback = bare      # keep first non-noise link as last resort
+
+    return fallback
 
 
 def _extract_contact(html: str, company_domain: str) -> dict | None:
