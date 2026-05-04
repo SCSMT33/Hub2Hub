@@ -9,7 +9,7 @@ from config import load_config
 from scraper import scrape_jobs
 from scorer import filter_and_score
 from apollo import enrich_contacts
-from hubspot import push_to_hubspot, dry_run_preview
+from hubspot import push_to_hubspot, dry_run_preview, HubSpotClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +21,29 @@ logger = logging.getLogger(__name__)
 
 def ts() -> str:
     return datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+
+
+def test_hubspot_connection(cfg: dict):
+    """Push a single test contact to verify the HubSpot connection is working."""
+    print(f"\n{ts()} Testing HubSpot connection...")
+    if not cfg.get("HUBSPOT_API_KEY"):
+        print(f"{ts()} ERROR: No HUBSPOT_API_KEY in config.env")
+        return
+
+    client = HubSpotClient(cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+    contact = {
+        "first_name": "Hub2Hub",
+        "last_name": "Test",
+        "email": "test@hub2hub.com",
+        "title": "Test Contact",
+        "linkedin_url": "",
+    }
+    contact_id = client.create_contact(contact, company_id=None)
+    if contact_id:
+        print(f"{ts()} HubSpot connection OK — test contact created (ID: {contact_id})")
+        print(f"{ts()} Check HubSpot CRM for test@hub2hub.com")
+    else:
+        print(f"{ts()} HubSpot connection FAILED — check your API key and scopes in config.env")
 
 
 def run_pipeline(cfg: dict, dry_run: bool = False):
@@ -64,6 +87,8 @@ def main():
     cfg = load_config(dry_run=dry_run)
 
     if "--run-now" in sys.argv or dry_run:
+        if dry_run and cfg.get("HUBSPOT_API_KEY"):
+            test_hubspot_connection(cfg)
         run_pipeline(cfg, dry_run=dry_run)
         return
 
