@@ -92,6 +92,9 @@ def _name_from_email(local: str) -> tuple[str, str]:
     if word[0].islower() and len(word) >= 6:
         return "", ""
     return word.capitalize(), ""
+
+
+def _scrape_html(job_url: str) -> str:
     """TheHub is React/Next.js — Playwright so JS has fully rendered."""
     try:
         with sync_playwright() as p:

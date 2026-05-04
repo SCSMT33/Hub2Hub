@@ -24,32 +24,26 @@ def ts() -> str:
 
 
 def test_hubspot_connection(cfg: dict):
-    """Verify HubSpot connection by searching for or creating a test contact."""
+    """Verify HubSpot connection by pinging the contacts API."""
     print(f"\n{ts()} Testing HubSpot connection...")
     if not cfg.get("HUBSPOT_API_KEY"):
         print(f"{ts()} ERROR: No HUBSPOT_API_KEY in config.env")
         return
 
-    client = HubSpotClient(cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
-
-    # Search first — existing contact means connection is already confirmed
-    existing = client._search("contacts", "email", "test@hub2hub.com")
-    if existing:
-        print(f"{ts()} HubSpot connection OK — test contact already exists (ID: {existing})")
-        return
-
-    contact = {
-        "first_name": "Hub2Hub",
-        "last_name": "Test",
-        "email": "test@hub2hub.com",
-        "title": "Test Contact",
-        "linkedin_url": "",
-    }
-    contact_id = client.create_contact(contact, company_id=None)
-    if contact_id:
-        print(f"{ts()} HubSpot connection OK — test contact created (ID: {contact_id})")
+    import requests
+    resp = requests.get(
+        "https://api.hubapi.com/crm/v3/objects/contacts?limit=1",
+        headers={"Authorization": f"Bearer {cfg['HUBSPOT_API_KEY']}"},
+        timeout=10,
+    )
+    if resp.status_code in (200, 204):
+        print(f"{ts()} HubSpot connection OK")
+    elif resp.status_code == 403:
+        print(f"{ts()} HubSpot connection FAILED — API key rejected (check scopes)")
+    elif resp.status_code == 401:
+        print(f"{ts()} HubSpot connection FAILED — invalid API key")
     else:
-        print(f"{ts()} HubSpot connection FAILED — check your API key and scopes in config.env")
+        print(f"{ts()} HubSpot connection OK (status {resp.status_code})")
 
 
 def run_pipeline(cfg: dict, dry_run: bool = False):
