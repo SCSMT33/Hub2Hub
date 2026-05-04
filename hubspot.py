@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -8,6 +9,17 @@ logger = logging.getLogger(__name__)
 FAILED_LOG = Path(__file__).parent / "failed_log.txt"
 
 HUBSPOT_BASE = "https://api.hubapi.com"
+
+# Legal suffixes to strip when normalising company names for dedup
+_LEGAL_SUFFIX = re.compile(
+    r"[\s,]+(aps|a/s|as|ltd|limited|inc|llc|corp|corporation|gmbh|sas|sarl|bv|nv|se|plc|pvt|co)\.?$",
+    re.IGNORECASE,
+)
+
+
+def _norm(name: str) -> str:
+    """Normalise company name — lowercase, strip legal suffix and whitespace."""
+    return _LEGAL_SUFFIX.sub("", name).strip().lower()
 
 
 class HubSpotClient:
@@ -54,14 +66,57 @@ class HubSpotClient:
         except Exception:
             return None
 
+    def _search_contact_by_name(self, first_name: str, last_name: str) -> str | None:
+        """Return existing contact ID matching first + last name, else None."""
+        if not first_name or not last_name:
+            return None
+        payload = {
+            "filterGroups": [{
+                "filters": [
+                    {"propertyName": "firstname", "operator": "EQ", "value": first_name},
+                    {"propertyName": "lastname", "operator": "EQ", "value": last_name},
+                ]
+            }],
+            "limit": 1,
+        }
+        try:
+            resp = requests.post(
+                f"{HUBSPOT_BASE}/crm/v3/objects/contacts/search",
+                json=payload,
+                headers=self.headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            return results[0]["id"] if results else None
+        except Exception:
+            return None
+
     def create_company(self, company: dict) -> str | None:
-        # Dedup by name — skip if already exists
-        existing = self._search("companies", "name", company["company_name"])
+        name = company["company_name"]
+        domain = company.get("domain", "")
+
+        # 1. Dedup by domain — most reliable, catches name variations
+        if domain:
+            existing = self._search("companies", "domain", domain)
+            if existing:
+                logger.info(f"Company already in HubSpot (domain match), skipping: {name}")
+                return existing
+
+        # 2. Dedup by exact name
+        existing = self._search("companies", "name", name)
         if existing:
-            logger.info(f"Company already in HubSpot, skipping: {company['company_name']}")
+            logger.info(f"Company already in HubSpot (name match), skipping: {name}")
             return existing
 
-        domain = company.get("domain", "")
+        # 3. Dedup by normalised name — catches "All Gravy" vs "All Gravy ApS"
+        normed = _norm(name)
+        if normed != name.lower():
+            existing = self._search("companies", "name", normed)
+            if existing:
+                logger.info(f"Company already in HubSpot (normalised name match), skipping: {name}")
+                return existing
+
         note = f"Source: TheHub.io — hiring {company['job_title']}"
         properties = {
             "name": company["company_name"],
@@ -78,12 +133,18 @@ class HubSpotClient:
         return None
 
     def create_contact(self, contact: dict, company_id: str | None, company: dict | None = None) -> str | None:
-        # Dedup by email — skip if already exists
+        # 1. Dedup by email
         if contact.get("email"):
             existing = self._search("contacts", "email", contact["email"])
             if existing:
-                logger.info(f"Contact already in HubSpot, skipping: {contact['email']}")
+                logger.info(f"Contact already in HubSpot (email match), skipping: {contact['email']}")
                 return existing
+
+        # 2. Dedup by full name — catches same person re-submitted with different email
+        existing = self._search_contact_by_name(contact.get("first_name", ""), contact.get("last_name", ""))
+        if existing:
+            logger.info(f"Contact already in HubSpot (name match), skipping: {contact.get('first_name')} {contact.get('last_name')}")
+            return existing
 
         domain = company.get("domain", "") if company else ""
         properties = {
