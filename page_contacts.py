@@ -96,19 +96,27 @@ def _extract_domain(html: str) -> str:
     return fallback
 
 
+def _brand(domain: str) -> str:
+    """Extract the brand/company name part from a domain — 'flavorscale' from 'flavorscale.app'."""
+    parts = domain.split(".")
+    return parts[-2] if len(parts) >= 2 else domain
+
+
 def _extract_contact(html: str, company_domain: str) -> dict | None:
     """
-    Return a contact whose email matches company_domain.
+    Return a contact whose email domain shares the same brand name as the
+    company domain (handles .com vs .app vs .io TLD differences).
     If no match, return None — caller falls back to Hunter.
     """
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(separator=" ")
+    company_brand = _brand(company_domain)
 
     candidates = []
     for email in EMAIL_RE.findall(text):
         email_domain = email.split("@")[-1].lower().removeprefix("www.")
-        # Only accept emails that belong to the company itself
-        if email_domain != company_domain:
+        # Accept if brand name matches (flavorscale.app == flavorscale.com)
+        if _brand(email_domain) != company_brand:
             continue
         local = email.split("@")[0].lower()
         if any(x in local for x in ["noreply", "no-reply", "info", "support", "hello",
