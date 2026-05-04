@@ -155,6 +155,7 @@ class HubSpotClient:
             "linkedin_bio": contact["linkedin_url"],
             "website": f"https://{domain}" if domain else "",
             "company": company["company_name"] if company else "",
+            "nickname": company.get("job_url", "") if company else "",
             "lifecyclestage": "lead",
         }
         if domain.endswith(".dk"):

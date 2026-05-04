@@ -51,7 +51,47 @@ def _title_score(text: str) -> int:
     return 0
 
 
-def _scrape_html(job_url: str) -> str:
+def _name_from_email(local: str) -> tuple[str, str]:
+    """
+    Derive first/last name from email local part. Returns ("", "") when ambiguous.
+
+    Rules:
+    - Has separator (. _ -): use parts. Skip if first part is 1 char (initial).
+      e.g. olli.kallioinen → Olli, Kallioinen ✅
+           j.markus        → skip (j is an initial) ✅
+    - No separator, single word:
+      Skip if camelCase or starts with pattern suggesting initials (JMarkus).
+      Skip if contains digits.
+      Otherwise capitalise as first name.
+      e.g. peneloppe → Peneloppe ✅
+           JMarkus   → skip (uppercase after pos 0) ✅
+           jmarkus   → skip (ambiguous — could be j+markus) ✅
+    """
+    parts = re.split(r"[._\-]", local)
+    parts = [p for p in parts if p]
+
+    if len(parts) >= 2:
+        if len(parts[0]) <= 1:
+            return "", ""  # initial before separator (j.markus)
+        if any(c.isdigit() for c in parts[0]):
+            return "", ""
+        first = parts[0].capitalize()
+        last = " ".join(p.capitalize() for p in parts[1:] if p)
+        return first, last
+
+    # Single word — only use if it unambiguously looks like one first name
+    word = parts[0] if parts else ""
+    if not word or len(word) < 3 or len(word) > 15:
+        return "", ""
+    if any(c.isdigit() for c in word):
+        return "", ""
+    # Uppercase letter after position 0 → camelCase or initials pattern → skip
+    if any(c.isupper() for c in word[1:]):
+        return "", ""
+    # First char lowercase followed by what could be a surname (6+ chars) → skip
+    if word[0].islower() and len(word) >= 6:
+        return "", ""
+    return word.capitalize(), ""
     """TheHub is React/Next.js — Playwright so JS has fully rendered."""
     try:
         with sync_playwright() as p:
@@ -104,7 +144,7 @@ def scrape_contact_and_domain_from_job_page(job_url: str) -> tuple[dict | None, 
     best = max(candidates, key=lambda c: c["score"])
     company_domain = best["domain"]
 
-    # Try to extract name + title from surrounding text
+    # Try to extract name + title from surrounding text (e.g. "Olli Kallioinen, Founder & CEO")
     name_match = re.search(
         r"([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)[,\s]+([A-Z][\w\s&/]{2,45})",
         best["context"]
@@ -115,6 +155,11 @@ def scrape_contact_and_domain_from_job_page(job_url: str) -> tuple[dict | None, 
         first_name = parts[0]
         last_name = " ".join(parts[1:])
         title = re.split(r"\s{2,}|[|•·–—]", name_match.group(2))[0].strip()[:60]
+
+    # Fall back to parsing the email local part for name clues
+    if not first_name:
+        local_part = best["email"].split("@")[0]
+        first_name, last_name = _name_from_email(local_part)
 
     contact = {
         "found": True,
