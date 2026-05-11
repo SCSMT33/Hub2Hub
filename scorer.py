@@ -18,6 +18,7 @@ PROMPT_TEMPLATE = """You are a business development assistant. Assess whether th
 
 Scoring rules:
 - Score "high" or "medium" if the company is hiring for ANY technical or engineering role related to code development (e.g. backend, frontend, full-stack, mobile, DevOps, QA, SRE, CTO, VP Engineering, lead developer, software engineer, etc.)
+- Score "low" and disqualify immediately if the description contains [COMPENSATION: UNPAID/EQUITY-ONLY] — unpaid positions are not valid prospects
 - Score "low" and disqualify immediately if the company operates in the gaming industry (video games, game studios, esports, gambling)
 - Score "low" if the role has no relation to software development
 - A CTO hire is always high score — it signals major tech investment

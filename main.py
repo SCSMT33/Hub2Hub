@@ -155,9 +155,34 @@ def run_interactive(cfg: dict):
     print(f"{ts()} Done — {pushed} record(s) pushed to HubSpot.")
 
 
+def list_owners(cfg: dict):
+    """Print all HubSpot owners so the user can find their correct owner ID."""
+    import requests
+    resp = requests.get(
+        "https://api.hubapi.com/crm/v3/owners",
+        headers={"Authorization": f"Bearer {cfg['HUBSPOT_API_KEY']}"},
+        timeout=10,
+    )
+    if not resp.ok:
+        print(f"Failed to fetch owners: {resp.status_code} {resp.text[:200]}")
+        return
+    owners = resp.json().get("results", [])
+    print(f"\n{'='*50}")
+    print("HubSpot Owners:")
+    print(f"{'='*50}")
+    for o in owners:
+        print(f"  ID: {o['id']}  —  {o.get('firstName', '')} {o.get('lastName', '')}  ({o.get('email', '')})")
+    print(f"{'='*50}")
+    print("Add HUBSPOT_OWNER_ID=<your ID> to config.env\n")
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     cfg = load_config(dry_run=dry_run)
+
+    if "--list-owners" in sys.argv:
+        list_owners(cfg)
+        return
 
     if dry_run:
         run_pipeline(cfg, dry_run=True)

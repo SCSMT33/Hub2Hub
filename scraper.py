@@ -58,10 +58,15 @@ def _scrape_page(page, url: str) -> list[dict]:
                 const companyName = remoteIdx > 0
                     ? secondLine.slice(0, remoteIdx).trim()
                     : secondLine.split(' ')[0];
+                const lowerText = text.toLowerCase();
+                const unpaid = lowerText.includes('unpaid') ||
+                               lowerText.includes('equity only') ||
+                               lowerText.includes('equity-only');
                 return {
                     href: el.getAttribute('href'),
                     job_title: jobTitle,
                     company_name: companyName,
+                    unpaid: unpaid,
                 };
             })
             .filter(c => c.job_title && c.company_name)
@@ -75,7 +80,7 @@ def _scrape_page(page, url: str) -> list[dict]:
             "company_website": "",
             "domain": "",
             "job_title": card["job_title"],
-            "description": f"Hiring: {card['job_title']}",
+            "description": f"Hiring: {card['job_title']}" + (" [COMPENSATION: UNPAID/EQUITY-ONLY]" if card.get("unpaid") else ""),
             "job_url": f"https://thehub.io{card['href']}",
         })
 

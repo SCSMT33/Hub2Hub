@@ -96,6 +96,13 @@ class HubSpotClient:
         name = company["company_name"]
         domain = company.get("domain", "")
 
+        # If the email domain base doesn't match the company name, prefer the domain
+        # e.g. company="Punch", domain="peyya.dev" → use "Peyya"
+        if domain:
+            domain_base = domain.split(".")[0].lower()
+            if domain_base and domain_base not in name.lower() and name.lower() not in domain_base:
+                name = domain_base.capitalize()
+
         # 1. Dedup by domain — most reliable, catches name variations
         if domain:
             existing = self._search("companies", "domain", domain)
