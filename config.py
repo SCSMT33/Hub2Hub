@@ -37,10 +37,11 @@ def run_onboarding(dry_run: bool = False):
 
 
 def load_config(dry_run: bool = False):
-    if not CONFIG_FILE.exists():
+    # In CI (GitHub Actions), keys come from environment — skip onboarding
+    if not CONFIG_FILE.exists() and not os.getenv("CI"):
         run_onboarding(dry_run=dry_run)
 
-    load_dotenv(CONFIG_FILE)
+    load_dotenv(CONFIG_FILE, override=False)  # env vars take precedence over file
 
     always_required = ["GEMINI_API_KEY"]
     live_required = ["HUBSPOT_API_KEY", "GEMINI_API_KEY"]

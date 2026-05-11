@@ -163,6 +163,11 @@ def main():
         run_pipeline(cfg, dry_run=True)
         return
 
+    if "--auto" in sys.argv:
+        # Non-interactive mode for scheduled/CI runs — pushes all qualified leads
+        run_pipeline(cfg, dry_run=False)
+        return
+
     if "--run-now" in sys.argv:
         run_interactive(cfg)
         return
