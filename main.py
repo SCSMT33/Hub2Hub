@@ -82,7 +82,7 @@ def run_interactive(cfg: dict):
     """Two-step workflow: scrape → show numbered list → user selects → push."""
     print(f"\n{ts()} Starting TheHub scrape...")
 
-    companies = scrape_jobs()
+    companies = scrape_jobs(ignore_seen=True)
     print(f"{ts()} Found {len(companies)} companies")
 
     if not companies:
