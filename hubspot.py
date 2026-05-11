@@ -117,12 +117,18 @@ class HubSpotClient:
                 logger.info(f"Company already in HubSpot (normalised name match), skipping: {name}")
                 return existing
 
-        note = f"Source: TheHub.io — hiring {company['job_title']}"
+        description = (
+            f"Source: TheHub.io\n"
+            f"Hiring: {company['job_title']}\n"
+            f"Job posting: {company.get('job_url', '')}"
+        )
         properties = {
             "name": company["company_name"],
             "domain": domain,
             "website": company.get("company_website", "") or (f"https://{domain}" if domain else ""),
-            "description": note,
+            "description": description,
+            "lifecyclestage": "lead",
+            "hubspot_owner_id": self.owner_id,
         }
         if domain.endswith(".dk"):
             properties["country"] = "Denmark"
@@ -157,6 +163,7 @@ class HubSpotClient:
             "company": company["company_name"] if company else "",
             "nickname": company.get("job_url", "") if company else "",
             "lifecyclestage": "lead",
+            "hubspot_owner_id": self.owner_id,
         }
         if domain.endswith(".dk"):
             properties["country"] = "Denmark"
