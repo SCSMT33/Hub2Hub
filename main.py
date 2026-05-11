@@ -47,9 +47,9 @@ def test_hubspot_connection(cfg: dict):
 
 
 def run_pipeline(cfg: dict, dry_run: bool = False):
+    """Used by the scheduler (fully automated) and --dry-run (preview only)."""
     print(f"{ts()} Starting TheHub scrape...")
 
-    # dry-run ignores the seen-today filter so you can re-test the same companies
     companies = scrape_jobs(ignore_seen=dry_run)
     print(f"{ts()} Found {len(companies)} companies")
 
@@ -65,47 +65,114 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
     print(f"{ts()} {contacts_found} contacts found on job pages")
 
     if dry_run:
-        # Push the first company that has a real contact found
-        target = next((c for c in enriched if c.get("contact", {}).get("found")), None)
-        if target and cfg.get("HUBSPOT_API_KEY"):
-            print(f"\n{ts()} Pushing to HubSpot: {target['company_name']} — {target['contact']['email']}")
-            pushed = push_to_hubspot([target], cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
-            if pushed:
-                print(f"{ts()} HubSpot push OK — check CRM for {target['company_name']}")
-            else:
-                print(f"{ts()} HubSpot push FAILED — check logs above")
-        elif not target:
-            print(f"\n{ts()} No contacts found on any job page — nothing pushed to HubSpot")
-
-        print(f"\n{ts()} DRY RUN — full lead preview:\n")
+        print(f"\n{ts()} DRY RUN — lead preview:\n")
         print("=" * 60)
         for company in enriched:
             dry_run_preview(company)
         print("=" * 60)
         print(f"\n{ts()} Dry run complete. {len(enriched)} leads ready.")
-        print(f"{ts()} Run without --dry-run to push all leads to HubSpot.")
+        print(f"{ts()} Use --run-now for the interactive push workflow.")
     else:
         pushed = push_to_hubspot(enriched, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
         print(f"{ts()} {pushed} records pushed to HubSpot")
         print(f"{ts()} Done. Next run at 08:00 tomorrow.")
 
 
+def run_interactive(cfg: dict):
+    """Two-step workflow: scrape → show numbered list → user selects → push."""
+    print(f"\n{ts()} Starting TheHub scrape...")
+
+    companies = scrape_jobs()
+    print(f"{ts()} Found {len(companies)} companies")
+
+    if not companies:
+        print(f"{ts()} Nothing new today.")
+        return
+
+    qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
+    print(f"{ts()} {len(qualified)} passed AI scoring\n")
+
+    enriched = enrich_contacts(qualified)
+    contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
+
+    print(f"\n{'=' * 60}")
+    print(f"  LEADS READY: {len(enriched)} qualified  |  {contacts_found} with contacts")
+    print(f"{'=' * 60}\n")
+
+    for i, company in enumerate(enriched, 1):
+        contact = company.get("contact", {})
+        if contact.get("found"):
+            name = f"{contact['first_name']} {contact['last_name']}".strip()
+            contact_block = (
+                f"  Contact : {name or '—'}\n"
+                f"  Title   : {contact['title'] or '—'}\n"
+                f"  Email   : {contact['email']}"
+            )
+        else:
+            contact_block = "  Contact : Not found"
+
+        print(
+            f"[{i}] {company['company_name']}  [{company['score'].upper()}]\n"
+            f"  Hiring  : {company['job_title']}\n"
+            f"  Reason  : {company['reason']}\n"
+            f"  Job URL : {company['job_url']}\n"
+            f"{contact_block}\n"
+        )
+
+    print(f"{'=' * 60}")
+    print("Enter numbers to push (e.g. '1 3 5'), 'all', or press Enter to skip:")
+
+    try:
+        raw = input("> ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{ts()} Cancelled — nothing pushed.")
+        return
+
+    if not raw or raw in ("none", "skip", "n"):
+        print(f"{ts()} Nothing pushed.")
+        return
+
+    if raw == "all":
+        to_push = enriched
+    else:
+        try:
+            indices = [int(x) - 1 for x in raw.split()]
+            to_push = [enriched[i] for i in indices if 0 <= i < len(enriched)]
+        except ValueError:
+            print(f"{ts()} Could not parse selection — nothing pushed.")
+            return
+
+    if not to_push:
+        print(f"{ts()} No valid leads selected.")
+        return
+
+    if not cfg.get("HUBSPOT_API_KEY"):
+        print(f"{ts()} ERROR: No HUBSPOT_API_KEY in config.env — cannot push.")
+        return
+
+    print(f"\n{ts()} Pushing {len(to_push)} lead(s) to HubSpot...")
+    pushed = push_to_hubspot(to_push, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+    print(f"{ts()} Done — {pushed} record(s) pushed to HubSpot.")
+
+
 def main():
     dry_run = "--dry-run" in sys.argv
     cfg = load_config(dry_run=dry_run)
 
-    if "--run-now" in sys.argv or dry_run:
-        if dry_run and cfg.get("HUBSPOT_API_KEY"):
-            test_hubspot_connection(cfg)
-        run_pipeline(cfg, dry_run=dry_run)
+    if dry_run:
+        run_pipeline(cfg, dry_run=True)
+        return
+
+    if "--run-now" in sys.argv:
+        run_interactive(cfg)
         return
 
     # Schedule daily at 08:00
     schedule.every().day.at("08:00").do(run_pipeline, cfg=cfg)
 
     print(f"{ts()} Scheduler started. Pipeline will run daily at 08:00.")
-    print(f"{ts()} Use --run-now to trigger immediately.")
-    print(f"{ts()} Use --dry-run to preview without pushing to HubSpot.")
+    print(f"{ts()} Use --run-now for the interactive push workflow.")
+    print(f"{ts()} Use --dry-run to preview leads without pushing.")
 
     while True:
         schedule.run_pending()
