@@ -43,7 +43,7 @@ def load_config(dry_run: bool = False):
     load_dotenv(CONFIG_FILE)
 
     always_required = ["GEMINI_API_KEY"]
-    live_required = ["HUBSPOT_API_KEY", "HUNTER_API_KEY", "GEMINI_API_KEY", "HUBSPOT_OWNER_ID"]
+    live_required = ["HUBSPOT_API_KEY", "GEMINI_API_KEY"]
 
     required = always_required if dry_run else live_required
     missing = [k for k in required if not os.getenv(k)]
@@ -56,5 +56,5 @@ def load_config(dry_run: bool = False):
         "HUBSPOT_API_KEY": os.getenv("HUBSPOT_API_KEY", ""),
         "HUNTER_API_KEY": os.getenv("HUNTER_API_KEY", ""),
         "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY"),
-        "HUBSPOT_OWNER_ID": os.getenv("HUBSPOT_OWNER_ID", ""),
+        "HUBSPOT_OWNER_ID": os.getenv("HUBSPOT_OWNER_ID", "50983759"),
     }
