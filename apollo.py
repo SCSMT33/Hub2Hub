@@ -153,7 +153,8 @@ def _apollo_find_domain(company_name: str, apollo_key: str) -> str:
     try:
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_companies/search",
-            params={"api_key": apollo_key, "q_organization_name": company_name, "page": 1, "per_page": 5},
+            params={"api_key": apollo_key},
+            json={"q_organization_name": company_name, "page": 1, "per_page": 5},
             timeout=15,
         )
         if not resp.ok:
@@ -186,8 +187,8 @@ def _apollo_find_person(domain: str, apollo_key: str, company_name: str = "") ->
     try:
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_people/api_search",
-            params={
-                "api_key": apollo_key,
+            params={"api_key": apollo_key},
+            json={
                 "q_organization_domains_list[]": domain,
                 "person_seniorities[]": ["owner", "founder", "c_suite", "vp", "director"],
                 "page": 1,
