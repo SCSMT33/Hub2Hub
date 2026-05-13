@@ -167,7 +167,6 @@ class HubSpotClient:
             "lastname": contact["last_name"],
             "email": contact["email"].lower(),
             "jobtitle": contact["title"],
-            "linkedin_bio": contact["linkedin_url"],
             "website": f"https://{domain}" if domain else "",
             "company": company["company_name"] if company else "",
             "nickname": company.get("job_url", "") if company else "",

@@ -45,7 +45,12 @@ def _not_found() -> dict:
 
 
 def _apollo_headers(api_key: str) -> dict:
-    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    return {"Content-Type": "application/json"}
+
+
+def _apollo_body(api_key: str, extra: dict) -> dict:
+    """Apollo master API keys must be passed in the request body."""
+    return {"api_key": api_key, **extra}
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +154,7 @@ def _apollo_find_domain(company_name: str, apollo_key: str) -> str:
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_companies/search",
             headers=_apollo_headers(apollo_key),
-            json={"q_organization_name": company_name, "page": 1, "per_page": 5},
+            json=_apollo_body(apollo_key, {"q_organization_name": company_name, "page": 1, "per_page": 5}),
             timeout=15,
         )
         if not resp.ok:
@@ -183,12 +188,12 @@ def _apollo_find_person(domain: str, apollo_key: str, company_name: str = "") ->
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_people/api_search",
             headers=_apollo_headers(apollo_key),
-            json={
+            json=_apollo_body(apollo_key, {
                 "q_organization_domains_list[]": domain,
                 "person_seniorities[]": ["owner", "founder", "c_suite", "vp", "director"],
                 "page": 1,
                 "per_page": 10,
-            },
+            }),
             timeout=15,
         )
         if not resp.ok:
