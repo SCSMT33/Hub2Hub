@@ -148,7 +148,7 @@ class HubSpotClient:
     def create_contact(self, contact: dict, company_id: str | None, company: dict | None = None) -> str | None:
         # 1. Dedup by email
         if contact.get("email"):
-            existing = self._search("contacts", "email", contact["email"])
+            existing = self._search("contacts", "email", contact["email"].lower())
             if existing:
                 logger.info(f"Contact already in HubSpot (email match), skipping: {contact['email']}")
                 return existing
@@ -163,7 +163,7 @@ class HubSpotClient:
         properties = {
             "firstname": contact["first_name"],
             "lastname": contact["last_name"],
-            "email": contact["email"],
+            "email": contact["email"].lower(),
             "jobtitle": contact["title"],
             "linkedin_bio": contact["linkedin_url"],
             "website": f"https://{domain}" if domain else "",

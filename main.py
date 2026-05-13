@@ -85,8 +85,13 @@ def run_test_one(cfg: dict):
             time.sleep(1)
             continue
 
-        # Skip if this contact email is already in HubSpot
-        if hs._search("contacts", "email", contact["email"]):
+        # Skip if this contact is already in HubSpot (check email lowercase + name)
+        email_lower = contact["email"].lower()
+        already = (
+            hs._search("contacts", "email", email_lower)
+            or hs._search_contact_by_name(contact.get("first_name", ""), contact.get("last_name", ""))
+        )
+        if already:
             print(f"{ts()} Skipping {name} — contact already in HubSpot.")
             time.sleep(1)
             continue
