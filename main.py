@@ -9,7 +9,7 @@ from config import load_config
 from scraper import scrape_jobs
 from scorer import filter_and_score
 from apollo import enrich_contacts, enrich_one
-from hubspot import push_to_hubspot, dry_run_preview, HubSpotClient
+from hubspot import push_to_hubspot, push_one_new, dry_run_preview, HubSpotClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,17 +67,15 @@ def run_test_one(cfg: dict):
         input("\nPress Enter to close...")
         return
 
-    # Try each qualified lead in order until one yields a contact with an email
     hunter_key = cfg.get("HUNTER_API_KEY", "")
     apollo_key = cfg.get("APOLLO_API_KEY", "")
-    hs = HubSpotClient(cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
-    chosen = None
 
-    print(f"\n{ts()} Searching for a lead with a contact email...\n")
+    print(f"\n{ts()} Searching for a new lead with a contact email...\n")
+    pushed = False
     for company in qualified:
         name = company["company_name"]
-
         print(f"{ts()} Trying: {name}...")
+
         enrich_one(company, hunter_api_key=hunter_key, apollo_api_key=apollo_key)
 
         contact = company.get("contact", {})
@@ -85,40 +83,29 @@ def run_test_one(cfg: dict):
             time.sleep(1)
             continue
 
-        # Skip if this contact is already in HubSpot (check email lowercase + name)
-        email_lower = contact["email"].lower()
-        already = (
-            hs._search("contacts", "email", email_lower)
-            or hs._search_contact_by_name(contact.get("first_name", ""), contact.get("last_name", ""))
-        )
-        if already:
+        # Attempt push — push_one_new returns 'exists' if already in HubSpot
+        result = push_one_new(company, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+        if result == "exists":
             print(f"{ts()} Skipping {name} — contact already in HubSpot.")
             time.sleep(1)
             continue
+        if result == "error":
+            print(f"{ts()} Push failed for {name}, trying next lead.")
+            time.sleep(1)
+            continue
 
-        chosen = company
+        # Successfully pushed a new lead
+        print(f"\n{ts()} New lead pushed to HubSpot:")
+        print(f"  Company : {name}  [{company['score'].upper()}]")
+        print(f"  Hiring  : {company['job_title']}")
+        print(f"  Contact : {contact['first_name']} {contact['last_name']} (via {contact.get('source', '?')})")
+        print(f"  Title   : {contact['title'] or '—'}")
+        print(f"  Email   : {contact['email']}")
+        pushed = True
         break
 
-    if not chosen:
-        print(f"\n{ts()} No leads with a contact email found across all {len(qualified)} qualified leads.")
-        input("\nPress Enter to close...")
-        return
-
-    contact = chosen["contact"]
-    print(f"\n{ts()} Lead found:")
-    print(f"  Company : {chosen['company_name']}  [{chosen['score'].upper()}]")
-    print(f"  Hiring  : {chosen['job_title']}")
-    print(f"  Reason  : {chosen['reason']}")
-    print(f"  Contact : {contact['first_name']} {contact['last_name']} (via {contact.get('source', '?')})")
-    print(f"  Title   : {contact['title'] or '—'}")
-    print(f"  Email   : {contact['email']}")
-
-    print(f"\n{ts()} Pushing to HubSpot...")
-    pushed = push_to_hubspot([chosen], cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
-    if pushed:
-        print(f"{ts()} Done — {pushed} record pushed to HubSpot.")
-    else:
-        print(f"{ts()} Push failed or record already existed in HubSpot.")
+    if not pushed:
+        print(f"\n{ts()} No new leads found — all contacts already in HubSpot or no emails found.")
 
     input("\nPress Enter to close...")
 

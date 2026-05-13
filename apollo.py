@@ -131,18 +131,23 @@ def _apollo_find_domain(company_name: str, api_key: str) -> str:
             timeout=15,
         )
         if not resp.ok:
-            logger.debug(f"Apollo org search failed ({resp.status_code}) for {company_name}")
+            logger.info(f"Apollo org search failed ({resp.status_code}) for '{company_name}'")
             return ""
         orgs = resp.json().get("organizations", [])
+        if not orgs:
+            logger.info(f"Apollo org search: no organizations found for '{company_name}'")
+            return ""
+        logger.info(f"Apollo org search: found {len(orgs)} org(s) for '{company_name}': {[o.get('name') for o in orgs]}")
         for org in orgs:
             org_name = org.get("name", "")
             org_domain = org.get("primary_domain", "") or org.get("website_url", "")
             if org_domain and _names_match(company_name, org_name):
                 domain = org_domain.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
-                logger.info(f"Apollo org search found domain for {company_name}: {domain}")
+                logger.info(f"Apollo org search: matched '{org_name}' → domain: {domain}")
                 return domain
+        logger.info(f"Apollo org search: no name match for '{company_name}' among results")
     except Exception as e:
-        logger.debug(f"Apollo org search error for {company_name}: {e}")
+        logger.info(f"Apollo org search error for '{company_name}': {e}")
     return ""
 
 

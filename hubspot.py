@@ -38,6 +38,8 @@ class HubSpotClient:
                 headers=self.headers,
                 timeout=15,
             )
+            if resp.status_code == 409:
+                return {"_already_exists": True}
             resp.raise_for_status()
             return resp.json()
         except requests.HTTPError as e:
@@ -178,6 +180,9 @@ class HubSpotClient:
         result = self._post("/crm/v3/objects/contacts", {"properties": properties})
         if not result:
             return None
+        if result.get("_already_exists"):
+            logger.info(f"Contact already exists in HubSpot: {contact.get('email', '')}")
+            return "EXISTS"
 
         contact_id = result.get("id")
         if contact_id and company_id:
@@ -304,6 +309,34 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
             _log_failure(company["company_name"], str(e))
 
     return pushed
+
+
+def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
+    """
+    Push a single company. Returns:
+      'new'      — company and/or contact created fresh
+      'exists'   — contact already existed in HubSpot
+      'error'    — push failed
+    """
+    client = HubSpotClient(api_key, owner_id)
+    try:
+        company_id = client.create_company(company)
+        if not company_id:
+            return "error"
+
+        contact = company.get("contact", {})
+        if contact.get("found"):
+            result = client.create_contact(contact, company_id, company=company)
+            if result == "EXISTS":
+                return "exists"
+
+        logger.info(f"Pushed to HubSpot: {company['company_name']}")
+        return "new"
+
+    except Exception as e:
+        logger.error(f"HubSpot push failed for {company['company_name']}: {e}")
+        _log_failure(company["company_name"], str(e))
+        return "error"
 
 
 def dry_run_preview(company: dict):
