@@ -152,14 +152,14 @@ class HubSpotClient:
         if contact.get("email"):
             existing = self._search("contacts", "email", contact["email"].lower())
             if existing:
-                logger.info(f"Contact already in HubSpot (email match), skipping: {contact['email']}")
-                return existing
+                logger.info(f"Contact already exists in HubSpot: {contact['email']}")
+                return "EXISTS"
 
-        # 2. Dedup by full name — catches same person re-submitted with different email
+        # 2. Dedup by full name
         existing = self._search_contact_by_name(contact.get("first_name", ""), contact.get("last_name", ""))
         if existing:
-            logger.info(f"Contact already in HubSpot (name match), skipping: {contact.get('first_name')} {contact.get('last_name')}")
-            return existing
+            logger.info(f"Contact already exists in HubSpot: {contact.get('first_name')} {contact.get('last_name')}")
+            return "EXISTS"
 
         domain = company.get("domain", "") if company else ""
         properties = {
@@ -319,6 +319,12 @@ def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
     """
     client = HubSpotClient(api_key, owner_id)
     try:
+        # Check if company already exists before creating anything
+        domain = company.get("domain", "")
+        if domain and client._search("companies", "domain", domain):
+            logger.info(f"Company already exists in HubSpot: {company['company_name']} ({domain})")
+            return "exists"
+
         company_id = client.create_company(company)
         if not company_id:
             return "error"
