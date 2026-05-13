@@ -94,6 +94,50 @@ def _name_from_email(local: str) -> tuple[str, str]:
     return word.capitalize(), ""
 
 
+def _extract_company_website(soup: BeautifulSoup) -> str:
+    """
+    Scan job page links for the company's own website.
+    Looks for external links near website-related anchor text, then falls back
+    to any external non-noise link that appears in the company info block.
+    Returns a bare domain string (e.g. 'sundaypower.com') or ''.
+    """
+    WEBSITE_HINTS = {"website", "visit", "homepage", "site", "web"}
+
+    for a in soup.find_all("a", href=True):
+        href = a.get("href", "")
+        if not href.startswith("http"):
+            continue
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(href)
+            domain = parsed.netloc.lower().removeprefix("www.")
+        except Exception:
+            continue
+        if not domain or _is_noise(domain):
+            continue
+        text = a.get_text(separator=" ").strip().lower()
+        if any(hint in text for hint in WEBSITE_HINTS):
+            return domain
+
+    # Second pass: any external non-noise link (pick shortest domain = likely homepage)
+    candidates = []
+    for a in soup.find_all("a", href=True):
+        href = a.get("href", "")
+        if not href.startswith("http"):
+            continue
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(href).netloc.lower().removeprefix("www.")
+        except Exception:
+            continue
+        if domain and not _is_noise(domain):
+            candidates.append(domain)
+
+    if candidates:
+        return min(candidates, key=len)
+    return ""
+
+
 def _scrape_html(job_url: str) -> str:
     """TheHub is React/Next.js — Playwright so JS has fully rendered."""
     try:
@@ -142,7 +186,11 @@ def scrape_contact_and_domain_from_job_page(job_url: str) -> tuple[dict | None, 
 
     if not candidates:
         logger.info(f"No company email found on job page: {job_url}")
-        return None, ""
+        # Still try to extract the company website domain for downstream enrichment
+        website_domain = _extract_company_website(soup)
+        if website_domain:
+            logger.info(f"Company website domain extracted from job page: {website_domain}")
+        return None, website_domain
 
     best = max(candidates, key=lambda c: c["score"])
     company_domain = best["domain"]

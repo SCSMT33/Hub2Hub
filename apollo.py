@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 
 import requests
@@ -16,6 +17,18 @@ _TITLE_TIERS = [
     ["co-founder", "cofounder", "technical co-founder", "founding engineer"],
     ["founder", "ceo", "chief executive officer"],
 ]
+
+
+_STOP_WORDS = {"the", "a", "an", "and", "of", "for", "in", "at", "by", "co", "inc", "ltd", "aps"}
+
+
+def _names_match(expected: str, returned: str) -> bool:
+    """True if any meaningful word from expected appears in returned (case-insensitive)."""
+    if not expected or not returned:
+        return True  # can't verify, allow through
+    exp_words = {w for w in re.sub(r"[^a-z0-9 ]", "", expected.lower()).split() if w not in _STOP_WORDS}
+    ret_lower = returned.lower()
+    return any(w in ret_lower for w in exp_words)
 
 
 def _title_tier(title: str) -> int:
@@ -85,6 +98,13 @@ def _hunt_contact(domain: str, api_key: str, company_name: str = "") -> dict | N
         if not best.get("value"):
             return None
 
+        # Cross-check: domain or company name from Hunter should match what we expect
+        discovered_domain = data.get("domain", "") or domain
+        discovered_org = data.get("organization", "") or discovered_domain
+        if company_name and not _names_match(company_name, discovered_org):
+            logger.warning(f"Hunter.io: company mismatch — expected '{company_name}', got '{discovered_org}'. Skipping.")
+            return None
+
         logger.info(f"Hunter.io [found]: {label} — {best['value']} ({best.get('position', '')})")
         return {
             "found": True,
@@ -146,6 +166,18 @@ def _apollo_contact(domain: str, api_key: str, company_name: str = "") -> dict |
             return None
 
         candidates = sorted(people, key=lambda p: _title_tier(p.get("title", "") or ""))
+
+        # Cross-check: filter out people whose org doesn't match the expected company
+        if company_name:
+            verified = [
+                p for p in candidates
+                if _names_match(company_name, p.get("organization", {}).get("name", "") if isinstance(p.get("organization"), dict) else str(p.get("organization", "")))
+            ]
+            if not verified:
+                logger.warning(f"Apollo.io: no people matched company name '{company_name}' — skipping.")
+                return None
+            candidates = verified
+
         best = candidates[0]
         email = best.get("email", "")
         if not email:
