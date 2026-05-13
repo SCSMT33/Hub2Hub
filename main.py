@@ -60,9 +60,14 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
     print(f"{ts()} {len(qualified)} passed AI scoring")
 
-    enriched = enrich_contacts(qualified, dry_run=dry_run)
+    enriched = enrich_contacts(
+        qualified,
+        hunter_api_key=cfg.get("HUNTER_API_KEY", ""),
+        apollo_api_key=cfg.get("APOLLO_API_KEY", ""),
+        dry_run=dry_run,
+    )
     contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
-    print(f"{ts()} {contacts_found} contacts found on job pages")
+    print(f"{ts()} {contacts_found} contacts found")
 
     if dry_run:
         print(f"\n{ts()} DRY RUN — lead preview:\n")
@@ -92,7 +97,11 @@ def run_interactive(cfg: dict):
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
     print(f"{ts()} {len(qualified)} passed AI scoring\n")
 
-    enriched = enrich_contacts(qualified)
+    enriched = enrich_contacts(
+        qualified,
+        hunter_api_key=cfg.get("HUNTER_API_KEY", ""),
+        apollo_api_key=cfg.get("APOLLO_API_KEY", ""),
+    )
     contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
 
     print(f"\n{'=' * 60}")

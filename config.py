@@ -56,6 +56,7 @@ def load_config(dry_run: bool = False):
     return {
         "HUBSPOT_API_KEY": os.getenv("HUBSPOT_API_KEY", ""),
         "HUNTER_API_KEY": os.getenv("HUNTER_API_KEY", ""),
+        "APOLLO_API_KEY": os.getenv("APOLLO_API_KEY", ""),
         "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY"),
         "HUBSPOT_OWNER_ID": os.getenv("HUBSPOT_OWNER_ID", "33049696"),
     }
