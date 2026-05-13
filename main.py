@@ -51,11 +51,11 @@ def run_test_one(cfg: dict):
     print(f"\n{ts()} TEST MODE — will push 1 lead only.\n")
     print(f"{ts()} Starting TheHub scrape...")
 
-    companies = scrape_jobs(ignore_seen=False)
+    companies = scrape_jobs(ignore_seen=True)
     print(f"{ts()} Found {len(companies)} companies")
 
     if not companies:
-        print(f"{ts()} Nothing new to process.")
+        print(f"{ts()} No companies found on TheHub.")
         input("\nPress Enter to close...")
         return
 
