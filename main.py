@@ -70,11 +70,20 @@ def run_test_one(cfg: dict):
     # Try each qualified lead in order until one yields a contact with an email
     hunter_key = cfg.get("HUNTER_API_KEY", "")
     apollo_key = cfg.get("APOLLO_API_KEY", "")
+    hs = HubSpotClient(cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
     chosen = None
 
     print(f"\n{ts()} Searching for a lead with a contact email...\n")
     for company in qualified:
-        print(f"{ts()} Trying: {company['company_name']}...")
+        name = company["company_name"]
+
+        # Skip companies already in HubSpot
+        existing = hs._search("companies", "name", name)
+        if existing:
+            print(f"{ts()} Skipping {name} — already in HubSpot.")
+            continue
+
+        print(f"{ts()} Trying: {name}...")
         enrich_one(company, hunter_api_key=hunter_key, apollo_api_key=apollo_key)
         if company.get("contact", {}).get("found"):
             chosen = company

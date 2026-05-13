@@ -103,14 +103,13 @@ def _extract_company_website(soup: BeautifulSoup) -> str:
     """
     WEBSITE_HINTS = {"website", "visit", "homepage", "site", "web"}
 
+    from urllib.parse import urlparse
     for a in soup.find_all("a", href=True):
         href = a.get("href", "")
         if not href.startswith("http"):
             continue
         try:
-            from urllib.parse import urlparse
-            parsed = urlparse(href)
-            domain = parsed.netloc.lower().removeprefix("www.")
+            domain = urlparse(href).netloc.lower().removeprefix("www.")
         except Exception:
             continue
         if not domain or _is_noise(domain):
@@ -118,23 +117,6 @@ def _extract_company_website(soup: BeautifulSoup) -> str:
         text = a.get_text(separator=" ").strip().lower()
         if any(hint in text for hint in WEBSITE_HINTS):
             return domain
-
-    # Second pass: any external non-noise link (pick shortest domain = likely homepage)
-    candidates = []
-    for a in soup.find_all("a", href=True):
-        href = a.get("href", "")
-        if not href.startswith("http"):
-            continue
-        try:
-            from urllib.parse import urlparse
-            domain = urlparse(href).netloc.lower().removeprefix("www.")
-        except Exception:
-            continue
-        if domain and not _is_noise(domain):
-            candidates.append(domain)
-
-    if candidates:
-        return min(candidates, key=len)
     return ""
 
 
