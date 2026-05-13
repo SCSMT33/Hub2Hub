@@ -38,14 +38,24 @@ def _not_found() -> dict:
     }
 
 
-def _hunt_contact(domain: str, api_key: str) -> dict | None:
-    """Hunter.io domain search — returns best contact by title priority."""
-    if not api_key or not domain:
+def _hunt_contact(domain: str, api_key: str, company_name: str = "") -> dict | None:
+    """Hunter.io domain search — returns best contact by title priority.
+    Falls back to company name search when domain is unknown."""
+    if not api_key:
         return None
+    params = {"limit": 10}
+    if domain:
+        params["domain"] = domain
+    elif company_name:
+        params["company"] = company_name
+    else:
+        return None
+
+    label = domain or company_name
     try:
         resp = requests.get(
             "https://api.hunter.io/v2/domain-search",
-            params={"domain": domain, "limit": 10},
+            params=params,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=15,
         )
@@ -53,29 +63,29 @@ def _hunt_contact(domain: str, api_key: str) -> dict | None:
             logger.warning("Hunter.io: invalid API key")
             return None
         if not resp.ok:
-            logger.debug(f"Hunter.io domain search failed ({resp.status_code}) for {domain}")
+            logger.debug(f"Hunter.io search failed ({resp.status_code}) for {label}")
             return None
 
-        emails = resp.json().get("data", {}).get("emails", [])
+        data = resp.json().get("data", {})
+        emails = data.get("emails", [])
+
+        # Store the discovered domain back if we searched by company name
+        if not domain and data.get("domain"):
+            domain = data["domain"]
+
         if not emails:
-            logger.info(f"Hunter.io: no emails found for {domain}")
+            logger.info(f"Hunter.io: no emails found for {label}")
             return None
 
-        # Filter to title-matched candidates; fall back to highest confidence
-        candidates = [(
-            _title_tier(e.get("position", "")), e
-        ) for e in emails]
+        candidates = [(_title_tier(e.get("position", "")), e) for e in emails]
         title_matches = [c for c in candidates if c[0] < 99]
 
-        if title_matches:
-            best = sorted(title_matches, key=lambda x: x[0])[0][1]
-        else:
-            best = max(emails, key=lambda e: e.get("confidence", 0))
+        best = sorted(title_matches, key=lambda x: x[0])[0][1] if title_matches else max(emails, key=lambda e: e.get("confidence", 0))
 
         if not best.get("value"):
             return None
 
-        logger.info(f"Hunter.io [found]: {domain} — {best['value']} ({best.get('position', '')})")
+        logger.info(f"Hunter.io [found]: {label} — {best['value']} ({best.get('position', '')})")
         return {
             "found": True,
             "first_name": best.get("first_name", ""),
@@ -84,57 +94,65 @@ def _hunt_contact(domain: str, api_key: str) -> dict | None:
             "title": best.get("position", ""),
             "linkedin_url": best.get("linkedin", ""),
             "source": "hunter",
+            "_domain": domain,
         }
     except Exception as e:
-        logger.debug(f"Hunter.io error for {domain}: {e}")
+        logger.debug(f"Hunter.io error for {label}: {e}")
         return None
 
 
-def _apollo_contact(domain: str, api_key: str) -> dict | None:
-    """Apollo.io people search — returns best contact by title priority."""
-    if not api_key or not domain:
+def _apollo_contact(domain: str, api_key: str, company_name: str = "") -> dict | None:
+    """Apollo.io people search — returns best contact by title priority.
+    Falls back to company name search when domain is unknown."""
+    if not api_key:
         return None
+
+    label = domain or company_name
+    payload = {
+        "person_titles": [
+            "VP Engineering", "VP of Engineering",
+            "Head of Engineering", "Head of Technology",
+            "CTO", "Chief Technology Officer",
+            "Director of Engineering",
+            "Co-Founder", "Founder", "CEO",
+        ],
+        "page": 1,
+        "per_page": 10,
+    }
+    if domain:
+        payload["q_organization_domains"] = [domain]
+    elif company_name:
+        payload["q_organization_name"] = company_name
+    else:
+        return None
+
     try:
         resp = requests.post(
             "https://api.apollo.io/api/v1/mixed_people/search",
             headers={"x-api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "q_organization_domains": [domain],
-                "person_titles": [
-                    "VP Engineering", "VP of Engineering",
-                    "Head of Engineering", "Head of Technology",
-                    "CTO", "Chief Technology Officer",
-                    "Director of Engineering",
-                    "Co-Founder", "Founder", "CEO",
-                ],
-                "page": 1,
-                "per_page": 10,
-            },
+            json=payload,
             timeout=15,
         )
         if resp.status_code == 401:
             logger.warning("Apollo.io: invalid API key")
             return None
         if not resp.ok:
-            logger.debug(f"Apollo.io search failed ({resp.status_code}) for {domain}")
+            logger.debug(f"Apollo.io search failed ({resp.status_code}) for {label}")
             return None
 
         people = resp.json().get("people", [])
         if not people:
-            logger.info(f"Apollo.io: no people found for {domain}")
+            logger.info(f"Apollo.io: no people found for {label}")
             return None
 
-        candidates = sorted(
-            people,
-            key=lambda p: _title_tier(p.get("title", "") or ""),
-        )
+        candidates = sorted(people, key=lambda p: _title_tier(p.get("title", "") or ""))
         best = candidates[0]
         email = best.get("email", "")
         if not email:
-            logger.info(f"Apollo.io: person found for {domain} but no email credit available")
+            logger.info(f"Apollo.io: person found for {label} but no email credit available")
             return None
 
-        logger.info(f"Apollo.io [found]: {domain} — {email} ({best.get('title', '')})")
+        logger.info(f"Apollo.io [found]: {label} — {email} ({best.get('title', '')})")
         return {
             "found": True,
             "first_name": best.get("first_name", ""),
@@ -145,8 +163,50 @@ def _apollo_contact(domain: str, api_key: str) -> dict | None:
             "source": "apollo",
         }
     except Exception as e:
-        logger.debug(f"Apollo.io error for {domain}: {e}")
+        logger.debug(f"Apollo.io error for {label}: {e}")
         return None
+
+
+def enrich_one(
+    company: dict,
+    hunter_api_key: str = "",
+    apollo_api_key: str = "",
+) -> dict:
+    """Enrich a single company. Returns the company dict with 'contact' set."""
+    name = company.get("company_name", "")
+    job_url = company.get("job_url", "")
+    contact = None
+    domain = company.get("domain", "")
+
+    # Step 1: scrape the job page directly
+    if job_url:
+        contact, scraped_domain = scrape_contact_and_domain_from_job_page(job_url)
+        if scraped_domain and not domain:
+            domain = scraped_domain
+            company["domain"] = domain
+
+    # Step 2: Hunter.io (domain or company name fallback)
+    if not contact:
+        result = _hunt_contact(domain, hunter_api_key, company_name=name)
+        if result:
+            # Capture domain discovered via company-name search
+            if not domain and result.get("_domain"):
+                domain = result["_domain"]
+                company["domain"] = domain
+            contact = result
+
+    # Step 3: Apollo.io (domain or company name fallback)
+    if not contact:
+        contact = _apollo_contact(domain, apollo_api_key, company_name=name)
+
+    if contact:
+        logger.info(f"Contact found [{contact.get('source', 'job_page')}]: {name} — {contact['email']}")
+    else:
+        contact = _not_found()
+        logger.info(f"No contact found: {name}")
+
+    company["contact"] = contact
+    return company
 
 
 def enrich_contacts(
@@ -156,33 +216,6 @@ def enrich_contacts(
     dry_run: bool = False,
 ) -> list[dict]:
     for company in companies:
-        name = company.get("company_name", "")
-        job_url = company.get("job_url", "")
-        contact = None
-        domain = company.get("domain", "")
-
-        # Step 1: scrape the job page directly
-        if job_url:
-            contact, scraped_domain = scrape_contact_and_domain_from_job_page(job_url)
-            if scraped_domain and not domain:
-                domain = scraped_domain
-                company["domain"] = domain
-
-        # Step 2: Hunter.io
-        if not contact and domain:
-            contact = _hunt_contact(domain, hunter_api_key)
-
-        # Step 3: Apollo.io
-        if not contact and domain:
-            contact = _apollo_contact(domain, apollo_api_key)
-
-        if contact:
-            logger.info(f"Contact found [{contact.get('source', 'job_page')}]: {name} — {contact['email']}")
-        else:
-            contact = _not_found()
-            logger.info(f"No contact found: {name}")
-
-        company["contact"] = contact
+        enrich_one(company, hunter_api_key=hunter_api_key, apollo_api_key=apollo_api_key)
         time.sleep(1)
-
     return companies

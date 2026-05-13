@@ -8,7 +8,7 @@ import time
 from config import load_config
 from scraper import scrape_jobs
 from scorer import filter_and_score
-from apollo import enrich_contacts
+from apollo import enrich_contacts, enrich_one
 from hubspot import push_to_hubspot, dry_run_preview, HubSpotClient
 
 logging.basicConfig(
@@ -67,29 +67,36 @@ def run_test_one(cfg: dict):
         input("\nPress Enter to close...")
         return
 
-    # Enrich and push only the first qualified lead
-    first = qualified[:1]
-    enriched = enrich_contacts(
-        first,
-        hunter_api_key=cfg.get("HUNTER_API_KEY", ""),
-        apollo_api_key=cfg.get("APOLLO_API_KEY", ""),
-    )
+    # Try each qualified lead in order until one yields a contact with an email
+    hunter_key = cfg.get("HUNTER_API_KEY", "")
+    apollo_key = cfg.get("APOLLO_API_KEY", "")
+    chosen = None
 
-    company = enriched[0]
-    contact = company.get("contact", {})
-    print(f"\n{ts()} Lead selected:")
-    print(f"  Company : {company['company_name']}  [{company['score'].upper()}]")
-    print(f"  Hiring  : {company['job_title']}")
-    print(f"  Reason  : {company['reason']}")
-    if contact.get("found"):
-        print(f"  Contact : {contact['first_name']} {contact['last_name']} ({contact.get('source', '')})")
-        print(f"  Title   : {contact['title'] or '—'}")
-        print(f"  Email   : {contact['email']}")
-    else:
-        print(f"  Contact : Not found")
+    print(f"\n{ts()} Searching for a lead with a contact email...\n")
+    for company in qualified:
+        print(f"{ts()} Trying: {company['company_name']}...")
+        enrich_one(company, hunter_api_key=hunter_key, apollo_api_key=apollo_key)
+        if company.get("contact", {}).get("found"):
+            chosen = company
+            break
+        time.sleep(1)
+
+    if not chosen:
+        print(f"\n{ts()} No leads with a contact email found across all {len(qualified)} qualified leads.")
+        input("\nPress Enter to close...")
+        return
+
+    contact = chosen["contact"]
+    print(f"\n{ts()} Lead found:")
+    print(f"  Company : {chosen['company_name']}  [{chosen['score'].upper()}]")
+    print(f"  Hiring  : {chosen['job_title']}")
+    print(f"  Reason  : {chosen['reason']}")
+    print(f"  Contact : {contact['first_name']} {contact['last_name']} (via {contact.get('source', '?')})")
+    print(f"  Title   : {contact['title'] or '—'}")
+    print(f"  Email   : {contact['email']}")
 
     print(f"\n{ts()} Pushing to HubSpot...")
-    pushed = push_to_hubspot(enriched, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+    pushed = push_to_hubspot([chosen], cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
     if pushed:
         print(f"{ts()} Done — {pushed} record pushed to HubSpot.")
     else:
