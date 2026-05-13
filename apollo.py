@@ -206,19 +206,6 @@ def _apollo_find_person(domain: str, apollo_key: str, company_name: str = "") ->
 
         logger.info(f"Apollo people search: {len(people)} person(s) found for {domain}")
 
-        # Filter by company name if provided
-        if company_name:
-            people = [
-                p for p in people
-                if _names_match(
-                    company_name,
-                    (p.get("organization") or {}).get("name", "") if isinstance(p.get("organization"), dict) else str(p.get("organization", ""))
-                )
-            ]
-            if not people:
-                logger.info(f"Apollo people search: no name match for '{company_name}'")
-                return None
-
         # Pick best by title priority
         best = sorted(people, key=lambda p: _title_tier(p.get("title", "") or ""))[0]
         logger.info(f"Apollo people search [found]: {best.get('name', '')} — {best.get('title', '')} @ {domain}")
@@ -271,6 +258,8 @@ def enrich_one(
             domain = _apollo_find_domain(name, apollo_api_key)
             if domain:
                 company["domain"] = domain
+        elif domain and apollo_api_key:
+            logger.info(f"Apollo org search skipped — domain already known: {domain}")
 
         # 3b: Find best-titled person at the company
         if domain and apollo_api_key:
