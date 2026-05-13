@@ -121,9 +121,34 @@ def _hunt_contact(domain: str, api_key: str, company_name: str = "") -> dict | N
         return None
 
 
+def _apollo_find_domain(company_name: str, api_key: str) -> str:
+    """Search Apollo organizations by name to retrieve the company domain."""
+    try:
+        resp = requests.post(
+            "https://api.apollo.io/api/v1/mixed_companies/search",
+            headers={"x-api-key": api_key, "Content-Type": "application/json"},
+            json={"q_organization_name": company_name, "page": 1, "per_page": 5},
+            timeout=15,
+        )
+        if not resp.ok:
+            logger.debug(f"Apollo org search failed ({resp.status_code}) for {company_name}")
+            return ""
+        orgs = resp.json().get("organizations", [])
+        for org in orgs:
+            org_name = org.get("name", "")
+            org_domain = org.get("primary_domain", "") or org.get("website_url", "")
+            if org_domain and _names_match(company_name, org_name):
+                domain = org_domain.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
+                logger.info(f"Apollo org search found domain for {company_name}: {domain}")
+                return domain
+    except Exception as e:
+        logger.debug(f"Apollo org search error for {company_name}: {e}")
+    return ""
+
+
 def _apollo_contact(domain: str, api_key: str, company_name: str = "") -> dict | None:
     """Apollo.io people search — returns best contact by title priority.
-    Falls back to company name search when domain is unknown."""
+    If no domain, searches Apollo organizations first to find it."""
     if not api_key:
         return None
 
@@ -141,10 +166,8 @@ def _apollo_contact(domain: str, api_key: str, company_name: str = "") -> dict |
     }
     if domain:
         payload["q_organization_domains"] = [domain]
-    elif company_name:
-        payload["q_organization_name"] = company_name
     else:
-        return None
+        return None  # Can't search without a domain
 
     try:
         resp = requests.post(
@@ -227,8 +250,14 @@ def enrich_one(
                 company["domain"] = domain
             contact = result
 
-    # Step 3: Apollo.io (domain or company name fallback)
+    # Step 3: Apollo.io (domain or company name → org lookup → people search)
     if not contact:
+        # If Apollo finds the domain via org search, save it back
+        if not domain and apollo_api_key:
+            found_domain = _apollo_find_domain(name, apollo_api_key)
+            if found_domain:
+                domain = found_domain
+                company["domain"] = domain
         contact = _apollo_contact(domain, apollo_api_key, company_name=name)
 
     if contact:
