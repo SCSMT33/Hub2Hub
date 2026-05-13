@@ -158,7 +158,7 @@ def _apollo_find_domain(company_name: str, apollo_key: str) -> str:
             timeout=15,
         )
         if not resp.ok:
-            logger.info(f"Apollo org search failed ({resp.status_code}) for '{company_name}'")
+            logger.info(f"Apollo org search failed ({resp.status_code}) for '{company_name}': {resp.text[:200]}")
             return ""
         orgs = resp.json().get("organizations", [])
         if not orgs:
@@ -177,19 +177,28 @@ def _apollo_find_domain(company_name: str, apollo_key: str) -> str:
     return ""
 
 
-def _apollo_find_person(domain: str, apollo_key: str, company_name: str = "") -> dict | None:
+def _apollo_find_person(apollo_key: str, domain: str = "", company_name: str = "") -> dict | None:
     """
     Apollo people search — finds best-titled person at the company.
+    Searches by domain if available, falls back to company name.
     Returns name + title only (no email — use Hunter email-finder for that).
     """
-    if not apollo_key or not domain:
+    if not apollo_key or (not domain and not company_name):
         return None
+
+    if domain:
+        search_filter = {"q_organization_domains_list[]": domain}
+        label = domain
+    else:
+        search_filter = {"q_organization_name": company_name}
+        label = company_name
+
     try:
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_people/api_search",
             params={"api_key": apollo_key},
             json={
-                "q_organization_domains_list[]": domain,
+                **search_filter,
                 "person_seniorities[]": ["owner", "founder", "c_suite", "vp", "director"],
                 "page": 1,
                 "per_page": 10,
@@ -197,27 +206,30 @@ def _apollo_find_person(domain: str, apollo_key: str, company_name: str = "") ->
             timeout=15,
         )
         if not resp.ok:
-            logger.info(f"Apollo people search failed ({resp.status_code}) for {domain}")
+            logger.info(f"Apollo people search failed ({resp.status_code}) for {label}: {resp.text[:200]}")
             return None
 
         people = resp.json().get("people", [])
         if not people:
-            logger.info(f"Apollo people search: no people found for {domain}")
+            logger.info(f"Apollo people search: no people found for {label}")
             return None
 
-        logger.info(f"Apollo people search: {len(people)} person(s) found for {domain}")
+        logger.info(f"Apollo people search: {len(people)} person(s) found for {label}")
 
         # Pick best by title priority
         best = sorted(people, key=lambda p: _title_tier(p.get("title", "") or ""))[0]
-        logger.info(f"Apollo people search [found]: {best.get('name', '')} — {best.get('title', '')} @ {domain}")
+        logger.info(f"Apollo people search [found]: {best.get('name', '')} — {best.get('title', '')} @ {label}")
+        org = best.get("organization") or {}
+        org_domain = (org.get("primary_domain", "") if isinstance(org, dict) else "") or ""
         return {
             "first_name": best.get("first_name", ""),
             "last_name": best.get("last_name", ""),
             "title": best.get("title", ""),
             "linkedin_url": best.get("linkedin_url", ""),
+            "_org_domain": org_domain,
         }
     except Exception as e:
-        logger.debug(f"Apollo people search error for {domain}: {e}")
+        logger.debug(f"Apollo people search error for {label}: {e}")
         return None
 
 
@@ -259,14 +271,17 @@ def enrich_one(
             domain = _apollo_find_domain(name, apollo_api_key)
             if domain:
                 company["domain"] = domain
-        elif domain and apollo_api_key:
-            logger.info(f"Apollo org search skipped — domain already known: {domain}")
 
-        # 3b: Find best-titled person at the company
-        if domain and apollo_api_key:
-            person = _apollo_find_person(domain, apollo_api_key, company_name=name)
+        # 3b: Find best-titled person — by domain if known, else by company name directly
+        if apollo_api_key:
+            person = _apollo_find_person(apollo_api_key, domain=domain, company_name=name)
             if person and person.get("first_name") and person.get("last_name"):
-                # 3c: Use Hunter email-finder to get their email
+                # 3c: Need a domain for Hunter email-finder — extract from Apollo result if missing
+                if not domain:
+                    org = person.get("_org_domain", "")
+                    if org:
+                        domain = org
+                        company["domain"] = domain
                 email = _hunter_find_email(domain, person["first_name"], person["last_name"], hunter_api_key)
                 if email:
                     contact = {
