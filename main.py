@@ -77,18 +77,22 @@ def run_test_one(cfg: dict):
     for company in qualified:
         name = company["company_name"]
 
-        # Skip companies already in HubSpot
-        existing = hs._search("companies", "name", name)
-        if existing:
-            print(f"{ts()} Skipping {name} — already in HubSpot.")
-            continue
-
         print(f"{ts()} Trying: {name}...")
         enrich_one(company, hunter_api_key=hunter_key, apollo_api_key=apollo_key)
-        if company.get("contact", {}).get("found"):
-            chosen = company
-            break
-        time.sleep(1)
+
+        contact = company.get("contact", {})
+        if not contact.get("found"):
+            time.sleep(1)
+            continue
+
+        # Skip if this contact email is already in HubSpot
+        if hs._search("contacts", "email", contact["email"]):
+            print(f"{ts()} Skipping {name} — contact already in HubSpot.")
+            time.sleep(1)
+            continue
+
+        chosen = company
+        break
 
     if not chosen:
         print(f"\n{ts()} No leads with a contact email found across all {len(qualified)} qualified leads.")
