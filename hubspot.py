@@ -319,10 +319,16 @@ def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
     """
     client = HubSpotClient(api_key, owner_id)
     try:
-        # Check if company already exists before creating anything
+        # Check if company already exists before creating anything (domain + name)
         domain = company.get("domain", "")
-        if domain and client._search("companies", "domain", domain):
-            logger.info(f"Company already exists in HubSpot: {company['company_name']} ({domain})")
+        company_name = company["company_name"]
+        company_exists = (
+            (domain and client._search("companies", "domain", domain))
+            or client._search("companies", "name", company_name)
+            or client._search("companies", "name", _norm(company_name))
+        )
+        if company_exists:
+            logger.info(f"Company already exists in HubSpot: {company_name}")
             return "exists"
 
         company_id = client.create_company(company)
