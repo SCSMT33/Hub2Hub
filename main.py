@@ -46,6 +46,58 @@ def test_hubspot_connection(cfg: dict):
         print(f"{ts()} HubSpot connection OK (status {resp.status_code})")
 
 
+def run_test_one(cfg: dict):
+    """Scrape, score all, enrich + push only the first qualified lead. For testing."""
+    print(f"\n{ts()} TEST MODE — will push 1 lead only.\n")
+    print(f"{ts()} Starting TheHub scrape...")
+
+    companies = scrape_jobs(ignore_seen=False)
+    print(f"{ts()} Found {len(companies)} companies")
+
+    if not companies:
+        print(f"{ts()} Nothing new to process.")
+        input("\nPress Enter to close...")
+        return
+
+    qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
+    print(f"{ts()} {len(qualified)} passed AI scoring")
+
+    if not qualified:
+        print(f"{ts()} No qualified leads found.")
+        input("\nPress Enter to close...")
+        return
+
+    # Enrich and push only the first qualified lead
+    first = qualified[:1]
+    enriched = enrich_contacts(
+        first,
+        hunter_api_key=cfg.get("HUNTER_API_KEY", ""),
+        apollo_api_key=cfg.get("APOLLO_API_KEY", ""),
+    )
+
+    company = enriched[0]
+    contact = company.get("contact", {})
+    print(f"\n{ts()} Lead selected:")
+    print(f"  Company : {company['company_name']}  [{company['score'].upper()}]")
+    print(f"  Hiring  : {company['job_title']}")
+    print(f"  Reason  : {company['reason']}")
+    if contact.get("found"):
+        print(f"  Contact : {contact['first_name']} {contact['last_name']} ({contact.get('source', '')})")
+        print(f"  Title   : {contact['title'] or '—'}")
+        print(f"  Email   : {contact['email']}")
+    else:
+        print(f"  Contact : Not found")
+
+    print(f"\n{ts()} Pushing to HubSpot...")
+    pushed = push_to_hubspot(enriched, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+    if pushed:
+        print(f"{ts()} Done — {pushed} record pushed to HubSpot.")
+    else:
+        print(f"{ts()} Push failed or record already existed in HubSpot.")
+
+    input("\nPress Enter to close...")
+
+
 def run_pipeline(cfg: dict, dry_run: bool = False):
     """Used by the scheduler (fully automated) and --dry-run (preview only)."""
     print(f"{ts()} Starting TheHub scrape...")
@@ -200,6 +252,10 @@ def main():
     if "--auto" in sys.argv:
         # Non-interactive mode for scheduled/CI runs — pushes all qualified leads
         run_pipeline(cfg, dry_run=False)
+        return
+
+    if "--test-one" in sys.argv:
+        run_test_one(cfg)
         return
 
     if "--run-now" in sys.argv:
