@@ -8,8 +8,8 @@ import time
 from config import load_config
 from scraper import scrape_jobs
 from scorer import filter_and_score
-from apollo import enrich_contacts
-from hubspot import push_to_hubspot, dry_run_preview, HubSpotClient
+from apollo import enrich_contacts, enrich_one
+from hubspot import push_to_hubspot, push_one_new, dry_run_preview, HubSpotClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +46,73 @@ def test_hubspot_connection(cfg: dict):
         print(f"{ts()} HubSpot connection OK (status {resp.status_code})")
 
 
+def run_test_one(cfg: dict, interactive: bool = True):
+    """Scrape, score all, enrich + push only the first qualified lead."""
+    print(f"\n{ts()} ONE LEAD MODE — will push 1 lead only.\n")
+    print(f"{ts()} Starting TheHub scrape...")
+
+    companies = scrape_jobs(ignore_seen=True)
+    print(f"{ts()} Found {len(companies)} companies")
+
+    if not companies:
+        print(f"{ts()} No companies found on TheHub.")
+        if interactive:
+            input("\nPress Enter to close...")
+        return
+
+    qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
+    print(f"{ts()} {len(qualified)} passed AI scoring")
+
+    if not qualified:
+        print(f"{ts()} No qualified leads found.")
+        if interactive:
+            input("\nPress Enter to close...")
+        return
+
+    hunter_key = cfg.get("HUNTER_API_KEY", "")
+    apollo_key = cfg.get("APOLLO_API_KEY", "")
+
+    print(f"\n{ts()} Searching for a new lead with a contact email...\n")
+    pushed = False
+    for company in qualified:
+        name = company["company_name"]
+        print(f"{ts()} Trying: {name}...")
+
+        enrich_one(company, hunter_api_key=hunter_key, apollo_api_key=apollo_key)
+
+        contact = company.get("contact", {})
+        if not contact.get("found"):
+            time.sleep(1)
+            continue
+
+        # Attempt push — push_one_new returns 'exists' if already in HubSpot
+        result = push_one_new(company, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
+        if result == "exists":
+            print(f"{ts()} Skipping {name} — contact already in HubSpot.")
+            time.sleep(1)
+            continue
+        if result == "error":
+            print(f"{ts()} Push failed for {name}, trying next lead.")
+            time.sleep(1)
+            continue
+
+        # Successfully pushed a new lead
+        print(f"\n{ts()} New lead pushed to HubSpot:")
+        print(f"  Company : {name}  [{company['score'].upper()}]")
+        print(f"  Hiring  : {company['job_title']}")
+        print(f"  Contact : {contact['first_name']} {contact['last_name']} (via {contact.get('source', '?')})")
+        print(f"  Title   : {contact['title'] or '—'}")
+        print(f"  Email   : {contact['email']}")
+        pushed = True
+        break
+
+    if not pushed:
+        print(f"\n{ts()} No new leads found — all contacts already in HubSpot or no emails found.")
+
+    if interactive:
+        input("\nPress Enter to close...")
+
+
 def run_pipeline(cfg: dict, dry_run: bool = False):
     """Used by the scheduler (fully automated) and --dry-run (preview only)."""
     print(f"{ts()} Starting TheHub scrape...")
@@ -60,9 +127,14 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
     print(f"{ts()} {len(qualified)} passed AI scoring")
 
-    enriched = enrich_contacts(qualified, dry_run=dry_run)
+    enriched = enrich_contacts(
+        qualified,
+        hunter_api_key=cfg.get("HUNTER_API_KEY", ""),
+        apollo_api_key=cfg.get("APOLLO_API_KEY", ""),
+        dry_run=dry_run,
+    )
     contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
-    print(f"{ts()} {contacts_found} contacts found on job pages")
+    print(f"{ts()} {contacts_found} contacts found")
 
     if dry_run:
         print(f"\n{ts()} DRY RUN — lead preview:\n")
@@ -92,7 +164,11 @@ def run_interactive(cfg: dict):
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
     print(f"{ts()} {len(qualified)} passed AI scoring\n")
 
-    enriched = enrich_contacts(qualified)
+    enriched = enrich_contacts(
+        qualified,
+        hunter_api_key=cfg.get("HUNTER_API_KEY", ""),
+        apollo_api_key=cfg.get("APOLLO_API_KEY", ""),
+    )
     contacts_found = sum(1 for c in enriched if c.get("contact", {}).get("found"))
 
     print(f"\n{'=' * 60}")
@@ -191,6 +267,14 @@ def main():
     if "--auto" in sys.argv:
         # Non-interactive mode for scheduled/CI runs — pushes all qualified leads
         run_pipeline(cfg, dry_run=False)
+        return
+
+    if "--test-one" in sys.argv:
+        run_test_one(cfg, interactive=True)
+        return
+
+    if "--one" in sys.argv:
+        run_test_one(cfg, interactive=False)
         return
 
     if "--run-now" in sys.argv:

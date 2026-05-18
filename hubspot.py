@@ -38,6 +38,8 @@ class HubSpotClient:
                 headers=self.headers,
                 timeout=15,
             )
+            if resp.status_code == 409:
+                return {"_already_exists": True}
             resp.raise_for_status()
             return resp.json()
         except requests.HTTPError as e:
@@ -148,29 +150,29 @@ class HubSpotClient:
     def create_contact(self, contact: dict, company_id: str | None, company: dict | None = None) -> str | None:
         # 1. Dedup by email
         if contact.get("email"):
-            existing = self._search("contacts", "email", contact["email"])
+            existing = self._search("contacts", "email", contact["email"].lower())
             if existing:
-                logger.info(f"Contact already in HubSpot (email match), skipping: {contact['email']}")
-                return existing
+                logger.info(f"Contact already exists in HubSpot: {contact['email']}")
+                return "EXISTS"
 
-        # 2. Dedup by full name — catches same person re-submitted with different email
+        # 2. Dedup by full name
         existing = self._search_contact_by_name(contact.get("first_name", ""), contact.get("last_name", ""))
         if existing:
-            logger.info(f"Contact already in HubSpot (name match), skipping: {contact.get('first_name')} {contact.get('last_name')}")
-            return existing
+            logger.info(f"Contact already exists in HubSpot: {contact.get('first_name')} {contact.get('last_name')}")
+            return "EXISTS"
 
         domain = company.get("domain", "") if company else ""
         properties = {
             "firstname": contact["first_name"],
             "lastname": contact["last_name"],
-            "email": contact["email"],
+            "email": contact["email"].lower(),
             "jobtitle": contact["title"],
-            "linkedin_bio": contact["linkedin_url"],
             "website": f"https://{domain}" if domain else "",
             "company": company["company_name"] if company else "",
             "nickname": company.get("job_url", "") if company else "",
             "lifecyclestage": "lead",
             "hubspot_owner_id": self.owner_id,
+            "lead_source": "TheHub.io",
         }
         if domain.endswith(".dk"):
             properties["country"] = "Denmark"
@@ -178,6 +180,9 @@ class HubSpotClient:
         result = self._post("/crm/v3/objects/contacts", {"properties": properties})
         if not result:
             return None
+        if result.get("_already_exists"):
+            logger.info(f"Contact already exists in HubSpot: {contact.get('email', '')}")
+            return "EXISTS"
 
         contact_id = result.get("id")
         if contact_id and company_id:
@@ -304,6 +309,46 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
             _log_failure(company["company_name"], str(e))
 
     return pushed
+
+
+def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
+    """
+    Push a single company. Returns:
+      'new'      — company and/or contact created fresh
+      'exists'   — contact already existed in HubSpot
+      'error'    — push failed
+    """
+    client = HubSpotClient(api_key, owner_id)
+    try:
+        # Check if company already exists before creating anything (domain + name)
+        domain = company.get("domain", "")
+        company_name = company["company_name"]
+        company_exists = (
+            (domain and client._search("companies", "domain", domain))
+            or client._search("companies", "name", company_name)
+            or client._search("companies", "name", _norm(company_name))
+        )
+        if company_exists:
+            logger.info(f"Company already exists in HubSpot: {company_name}")
+            return "exists"
+
+        company_id = client.create_company(company)
+        if not company_id:
+            return "error"
+
+        contact = company.get("contact", {})
+        if contact.get("found"):
+            result = client.create_contact(contact, company_id, company=company)
+            if result == "EXISTS":
+                return "exists"
+
+        logger.info(f"Pushed to HubSpot: {company['company_name']}")
+        return "new"
+
+    except Exception as e:
+        logger.error(f"HubSpot push failed for {company['company_name']}: {e}")
+        _log_failure(company["company_name"], str(e))
+        return "error"
 
 
 def dry_run_preview(company: dict):

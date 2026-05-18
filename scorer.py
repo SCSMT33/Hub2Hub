@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 import requests
 
@@ -115,6 +116,12 @@ def score_company(company: dict, api_key: str, model: str, api_version: str) -> 
         return None
 
 
+_EQUITY_RE = re.compile(
+    r"\bequity[\s-]only\b|\bunpaid\b|\bno[\s-]salary\b|\bsweat equity\b|\bvolunteer\b",
+    re.IGNORECASE,
+)
+
+
 def filter_and_score(companies: list[dict], gemini_api_key: str) -> list[dict]:
     model, api_version = _detect_model(gemini_api_key)
     if not model:
@@ -122,6 +129,10 @@ def filter_and_score(companies: list[dict], gemini_api_key: str) -> list[dict]:
 
     qualified = []
     for company in companies:
+        if _EQUITY_RE.search(company.get("description", "")):
+            logger.info(f"Dropped (equity-only/unpaid): {company['company_name']}")
+            continue
+
         result = score_company(company, gemini_api_key, model, api_version)
         if result is None:
             logger.warning(f"Skipping {company['company_name']} — scoring failed.")
