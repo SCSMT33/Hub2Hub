@@ -45,7 +45,11 @@ def _not_found() -> dict:
 
 
 def _apollo_headers(api_key: str) -> dict:
-    return {"Content-Type": "application/json"}
+    return {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "X-Api-Key": api_key,
+    }
 
 
 def _apollo_params(api_key: str) -> dict:
@@ -153,8 +157,8 @@ def _apollo_find_domain(company_name: str, apollo_key: str) -> str:
     try:
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_companies/search",
-            headers={"Content-Type": "application/json", "Cache-Control": "no-cache"},
-            json={"api_key": apollo_key, "q_organization_name": company_name, "page": 1, "per_page": 5},
+            headers=_apollo_headers(apollo_key),
+            json={"q_organization_name": company_name, "page": 1, "per_page": 5},
             timeout=15,
         )
         if not resp.ok:
@@ -196,9 +200,8 @@ def _apollo_find_person(apollo_key: str, domain: str = "", company_name: str = "
     try:
         resp = requests.post(
             f"{_APOLLO_BASE}/mixed_people/api_search",
-            headers={"Content-Type": "application/json", "Cache-Control": "no-cache"},
+            headers=_apollo_headers(apollo_key),
             json={
-                "api_key": apollo_key,
                 **search_filter,
                 "person_seniorities[]": ["owner", "founder", "c_suite", "vp", "director"],
                 "page": 1,

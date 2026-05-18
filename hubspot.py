@@ -172,7 +172,6 @@ class HubSpotClient:
             "nickname": company.get("job_url", "") if company else "",
             "lifecyclestage": "lead",
             "hubspot_owner_id": self.owner_id,
-            "lead_source": "TheHub.io",
         }
         if domain.endswith(".dk"):
             properties["country"] = "Denmark"
