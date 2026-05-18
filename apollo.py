@@ -185,7 +185,7 @@ def _apollo_find_person(apollo_key: str, domain: str = "", company_name: str = "
     """
     Apollo people search — finds best-titled person at the company.
     Searches by domain if available, falls back to company name.
-    Returns name + title only (no email — use Hunter email-finder for that).
+    Returns name, title, person ID, and email if already present in response.
     """
     if not apollo_key or (not domain and not company_name):
         return None
@@ -231,10 +231,35 @@ def _apollo_find_person(apollo_key: str, domain: str = "", company_name: str = "
             "title": best.get("title", ""),
             "linkedin_url": best.get("linkedin_url", ""),
             "_org_domain": org_domain,
+            "_id": best.get("id", ""),
+            "_email": best.get("email", "") or "",
         }
     except Exception as e:
         logger.debug(f"Apollo people search error for {label}: {e}")
         return None
+
+
+def _apollo_reveal_email(person_id: str, apollo_key: str) -> str:
+    """Reveal email for a known Apollo person by ID. Costs 1 Apollo credit."""
+    if not apollo_key or not person_id:
+        return ""
+    try:
+        resp = requests.post(
+            f"{_APOLLO_BASE}/people/match",
+            headers=_apollo_headers(apollo_key),
+            json={"id": person_id, "reveal_personal_emails": True},
+            timeout=15,
+        )
+        if not resp.ok:
+            logger.info(f"Apollo reveal failed ({resp.status_code}) for {person_id}: {resp.text[:200]}")
+            return ""
+        email = resp.json().get("person", {}).get("email", "") or ""
+        if email:
+            logger.info(f"Apollo reveal [found]: {email}")
+        return email
+    except Exception as e:
+        logger.debug(f"Apollo reveal error: {e}")
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +293,7 @@ def enrich_one(
                 company["domain"] = domain
             contact = result
 
-    # Step 3: Apollo finds the person → Hunter gets their email
+    # Step 3: Apollo finds the person → get email from Apollo, fall back to Hunter
     if not contact:
         # 3a: Get domain via Apollo org search if still unknown
         if not domain and apollo_api_key:
@@ -280,13 +305,22 @@ def enrich_one(
         if apollo_api_key:
             person = _apollo_find_person(apollo_api_key, domain=domain, company_name=name)
             if person and person.get("first_name") and person.get("last_name"):
-                # 3c: Need a domain for Hunter email-finder — extract from Apollo result if missing
-                if not domain:
-                    org = person.get("_org_domain", "")
-                    if org:
-                        domain = org
-                        company["domain"] = domain
-                email = _hunter_find_email(domain, person["first_name"], person["last_name"], hunter_api_key)
+                # Resolve domain from Apollo result if still missing
+                if not domain and person.get("_org_domain"):
+                    domain = person["_org_domain"]
+                    company["domain"] = domain
+
+                # 3c: Get email — Apollo response first (free), then Apollo reveal (1 credit), then Hunter
+                email = person.get("_email", "")
+                source = "apollo"
+
+                if not email and person.get("_id"):
+                    email = _apollo_reveal_email(person["_id"], apollo_api_key)
+
+                if not email:
+                    email = _hunter_find_email(domain, person["first_name"], person["last_name"], hunter_api_key)
+                    source = "apollo+hunter"
+
                 if email:
                     contact = {
                         "found": True,
@@ -295,10 +329,10 @@ def enrich_one(
                         "email": email,
                         "title": person.get("title", ""),
                         "linkedin_url": person.get("linkedin_url", ""),
-                        "source": "apollo+hunter",
+                        "source": source,
                     }
                 else:
-                    logger.info(f"Apollo found person but Hunter couldn't get email for {name}")
+                    logger.info(f"Apollo found person but could not get email for {name}")
 
     if contact:
         logger.info(f"Contact found [{contact.get('source', 'job_page')}]: {name} — {contact['email']}")
