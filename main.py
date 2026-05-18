@@ -46,9 +46,9 @@ def test_hubspot_connection(cfg: dict):
         print(f"{ts()} HubSpot connection OK (status {resp.status_code})")
 
 
-def run_test_one(cfg: dict):
-    """Scrape, score all, enrich + push only the first qualified lead. For testing."""
-    print(f"\n{ts()} TEST MODE — will push 1 lead only.\n")
+def run_test_one(cfg: dict, interactive: bool = True):
+    """Scrape, score all, enrich + push only the first qualified lead."""
+    print(f"\n{ts()} ONE LEAD MODE — will push 1 lead only.\n")
     print(f"{ts()} Starting TheHub scrape...")
 
     companies = scrape_jobs(ignore_seen=True)
@@ -56,7 +56,8 @@ def run_test_one(cfg: dict):
 
     if not companies:
         print(f"{ts()} No companies found on TheHub.")
-        input("\nPress Enter to close...")
+        if interactive:
+            input("\nPress Enter to close...")
         return
 
     qualified = filter_and_score(companies, cfg["GEMINI_API_KEY"])
@@ -64,7 +65,8 @@ def run_test_one(cfg: dict):
 
     if not qualified:
         print(f"{ts()} No qualified leads found.")
-        input("\nPress Enter to close...")
+        if interactive:
+            input("\nPress Enter to close...")
         return
 
     hunter_key = cfg.get("HUNTER_API_KEY", "")
@@ -107,7 +109,8 @@ def run_test_one(cfg: dict):
     if not pushed:
         print(f"\n{ts()} No new leads found — all contacts already in HubSpot or no emails found.")
 
-    input("\nPress Enter to close...")
+    if interactive:
+        input("\nPress Enter to close...")
 
 
 def run_pipeline(cfg: dict, dry_run: bool = False):
@@ -267,7 +270,11 @@ def main():
         return
 
     if "--test-one" in sys.argv:
-        run_test_one(cfg)
+        run_test_one(cfg, interactive=True)
+        return
+
+    if "--one" in sys.argv:
+        run_test_one(cfg, interactive=False)
         return
 
     if "--run-now" in sys.argv:

@@ -4,7 +4,16 @@ on:
   schedule:
     - cron: '30 7 * * 1'  # Monday 09:30 CET (07:30 UTC)
     - cron: '30 7 * * 3'  # Wednesday 09:30 CET (07:30 UTC)
-  workflow_dispatch:       # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'How many leads to push?'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - one
 
 jobs:
   run-pipeline:
@@ -32,4 +41,9 @@ jobs:
           HUBSPOT_OWNER_ID: ${{ secrets.HUBSPOT_OWNER_ID }}
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
-        run: python main.py --auto
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "one" ]; then
+            python main.py --one
+          else
+            python main.py --auto
+          fi
