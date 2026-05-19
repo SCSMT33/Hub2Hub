@@ -107,6 +107,17 @@ def _hunt_contact(domain: str, hunter_key: str, company_name: str = "") -> dict 
         best = sorted(title_matches, key=lambda x: x[0])[0][1] if title_matches else max(emails, key=lambda e: e.get("confidence", 0))
 
         if not best.get("value"):
+            # No email, but return name/title so Apollo can try a name match
+            if best.get("first_name") and best.get("last_name"):
+                logger.info(f"Hunter.io domain [name only]: {label} — {best['first_name']} {best['last_name']} ({best.get('position', '')})")
+                return {
+                    "found": False,
+                    "_name_only": True,
+                    "first_name": best.get("first_name", ""),
+                    "last_name": best.get("last_name", ""),
+                    "title": best.get("position", ""),
+                    "_domain": discovered_domain,
+                }
             return None
 
         logger.info(f"Hunter.io domain [found]: {label} — {best['value']} ({best.get('position', '')})")
@@ -262,6 +273,37 @@ def _apollo_reveal_email(person_id: str, apollo_key: str) -> str:
         return ""
 
 
+def _apollo_match_by_name(first_name: str, last_name: str, domain: str, apollo_key: str) -> str:
+    """
+    Apollo /people/match with name + domain instead of an ID.
+    Works on the free plan — costs 1 credit if a match is found.
+    """
+    if not apollo_key or not first_name or not last_name or not domain:
+        return ""
+    try:
+        resp = requests.post(
+            f"{_APOLLO_BASE}/people/match",
+            headers=_apollo_headers(apollo_key),
+            json={
+                "first_name": first_name,
+                "last_name": last_name,
+                "domain": domain,
+                "reveal_personal_emails": True,
+            },
+            timeout=15,
+        )
+        if not resp.ok:
+            logger.info(f"Apollo name match failed ({resp.status_code}) for {first_name} {last_name} @ {domain}: {resp.text[:200]}")
+            return ""
+        email = resp.json().get("person", {}).get("email", "") or ""
+        if email:
+            logger.info(f"Apollo name match [found]: {first_name} {last_name} → {email}")
+        return email
+    except Exception as e:
+        logger.debug(f"Apollo name match error: {e}")
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # Enrichment orchestration
 # ---------------------------------------------------------------------------
@@ -291,7 +333,23 @@ def enrich_one(
             if not domain and result.get("_domain"):
                 domain = result["_domain"]
                 company["domain"] = domain
-            contact = result
+            if result.get("found"):
+                contact = result
+            elif result.get("_name_only") and apollo_api_key:
+                # Hunter found a name but no email — try Apollo match by name
+                email = _apollo_match_by_name(
+                    result["first_name"], result["last_name"], domain, apollo_api_key
+                )
+                if email:
+                    contact = {
+                        "found": True,
+                        "first_name": result["first_name"],
+                        "last_name": result["last_name"],
+                        "email": email,
+                        "title": result.get("title", ""),
+                        "linkedin_url": "",
+                        "source": "hunter+apollo",
+                    }
 
     # Step 3: Apollo finds the person → get email from Apollo, fall back to Hunter
     if not contact:
@@ -320,6 +378,10 @@ def enrich_one(
                 if not email:
                     email = _hunter_find_email(domain, person["first_name"], person["last_name"], hunter_api_key)
                     source = "apollo+hunter"
+
+                if not email:
+                    email = _apollo_match_by_name(person["first_name"], person["last_name"], domain, apollo_api_key)
+                    source = "apollo+name_match"
 
                 if email:
                     contact = {
