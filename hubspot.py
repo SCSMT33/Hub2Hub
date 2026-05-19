@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from datetime import date, datetime, timezone
@@ -7,6 +8,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 FAILED_LOG = Path(__file__).parent / "failed_log.txt"
+HUBSPOT_LOG = Path(__file__).parent / "hubspot_log.json"
 
 HUBSPOT_BASE = "https://api.hubapi.com"
 
@@ -20,6 +22,41 @@ _LEGAL_SUFFIX = re.compile(
 def _norm(name: str) -> str:
     """Normalise company name — lowercase, strip legal suffix and whitespace."""
     return _LEGAL_SUFFIX.sub("", name).strip().lower()
+
+
+def _load_hubspot_log() -> list[dict]:
+    if HUBSPOT_LOG.exists():
+        try:
+            return json.loads(HUBSPOT_LOG.read_text()).get("companies", [])
+        except Exception:
+            return []
+    return []
+
+
+def _save_hubspot_log(companies: list[dict]):
+    HUBSPOT_LOG.write_text(json.dumps({"companies": companies}, indent=2) + "\n")
+
+
+def _company_in_log(name: str, domain: str) -> bool:
+    norm_name = _norm(name)
+    norm_domain = domain.lower() if domain else ""
+    for c in _load_hubspot_log():
+        if norm_domain and c.get("domain", "").lower() == norm_domain:
+            return True
+        if _norm(c.get("name", "")) == norm_name:
+            return True
+    return False
+
+
+def _record_company(name: str, domain: str):
+    companies = _load_hubspot_log()
+    norm_name = _norm(name)
+    norm_domain = domain.lower() if domain else ""
+    for c in companies:
+        if (norm_domain and c.get("domain", "").lower() == norm_domain) or _norm(c.get("name", "")) == norm_name:
+            return
+    companies.append({"name": name, "domain": domain, "pushed_at": str(date.today())})
+    _save_hubspot_log(companies)
 
 
 class HubSpotClient:
@@ -292,6 +329,14 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
 
     for company in companies:
         try:
+            domain = company.get("domain", "")
+            company_name = company["company_name"]
+
+            # Check local log first (works without HubSpot companies.read scope)
+            if _company_in_log(company_name, domain):
+                logger.info(f"Company already in local log, skipping: {company_name}")
+                continue
+
             company_id = client.create_company(company)
             if not company_id:
                 raise RuntimeError("Failed to create company record")
@@ -300,8 +345,9 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
             if contact.get("found"):
                 client.create_contact(contact, company_id, company=company)
 
+            _record_company(company_name, domain)
             pushed += 1
-            logger.info(f"Pushed to HubSpot: {company['company_name']}")
+            logger.info(f"Pushed to HubSpot: {company_name}")
 
         except Exception as e:
             logger.error(f"HubSpot push failed for {company['company_name']}: {e}")
@@ -314,14 +360,20 @@ def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
     """
     Push a single company. Returns:
       'new'      — company and/or contact created fresh
-      'exists'   — contact already existed in HubSpot
+      'exists'   — company or contact already existed
       'error'    — push failed
     """
     client = HubSpotClient(api_key, owner_id)
     try:
-        # Check if company already exists before creating anything (domain + name)
         domain = company.get("domain", "")
         company_name = company["company_name"]
+
+        # Check local log first (works without HubSpot companies.read scope)
+        if _company_in_log(company_name, domain):
+            logger.info(f"Company already in local log, skipping: {company_name}")
+            return "exists"
+
+        # Also try HubSpot search (works if companies.read scope is active)
         company_exists = (
             (domain and client._search("companies", "domain", domain))
             or client._search("companies", "name", company_name)
@@ -329,6 +381,7 @@ def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
         )
         if company_exists:
             logger.info(f"Company already exists in HubSpot: {company_name}")
+            _record_company(company_name, domain)
             return "exists"
 
         company_id = client.create_company(company)
@@ -339,8 +392,10 @@ def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
         if contact.get("found"):
             result = client.create_contact(contact, company_id, company=company)
             if result == "EXISTS":
+                _record_company(company_name, domain)
                 return "exists"
 
+        _record_company(company_name, domain)
         logger.info(f"Pushed to HubSpot: {company['company_name']}")
         return "new"
 
