@@ -323,6 +323,29 @@ class HubSpotClient:
         return None
 
 
+def _company_exists_in_hubspot(client: "HubSpotClient", company_name: str, domain: str) -> bool:
+    """
+    Check whether a company already exists in HubSpot.
+    Tries company search (needs companies.read scope), then contact search
+    by company name (needs only contacts.read, which is always active).
+    """
+    # 1. Company object search (works if companies.read scope is active)
+    if domain and client._search("companies", "domain", domain):
+        return True
+    if client._search("companies", "name", company_name):
+        return True
+    normed = _norm(company_name)
+    if normed != company_name.lower() and client._search("companies", "name", normed):
+        return True
+
+    # 2. Contact search by company name — contacts.read is always available
+    # If any contact exists with this company name, the company was pushed before.
+    if client._search("contacts", "company", company_name):
+        return True
+
+    return False
+
+
 def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
     client = HubSpotClient(api_key, owner_id)
     pushed = 0
@@ -332,7 +355,13 @@ def push_to_hubspot(companies: list[dict], api_key: str, owner_id: str) -> int:
             domain = company.get("domain", "")
             company_name = company["company_name"]
 
-            # Check local log first (works without HubSpot companies.read scope)
+            # Primary: verify against HubSpot (company search + contact search)
+            if _company_exists_in_hubspot(client, company_name, domain):
+                logger.info(f"Company already in HubSpot, skipping: {company_name}")
+                _record_company(company_name, domain)
+                continue
+
+            # Fallback: local log catches companies pushed without a contact
             if _company_in_log(company_name, domain):
                 logger.info(f"Company already in local log, skipping: {company_name}")
                 continue
@@ -368,20 +397,15 @@ def push_one_new(company: dict, api_key: str, owner_id: str) -> str:
         domain = company.get("domain", "")
         company_name = company["company_name"]
 
-        # Check local log first (works without HubSpot companies.read scope)
-        if _company_in_log(company_name, domain):
-            logger.info(f"Company already in local log, skipping: {company_name}")
+        # Primary: verify against HubSpot (company search + contact search)
+        if _company_exists_in_hubspot(client, company_name, domain):
+            logger.info(f"Company already in HubSpot, skipping: {company_name}")
+            _record_company(company_name, domain)
             return "exists"
 
-        # Also try HubSpot search (works if companies.read scope is active)
-        company_exists = (
-            (domain and client._search("companies", "domain", domain))
-            or client._search("companies", "name", company_name)
-            or client._search("companies", "name", _norm(company_name))
-        )
-        if company_exists:
-            logger.info(f"Company already exists in HubSpot: {company_name}")
-            _record_company(company_name, domain)
+        # Fallback: local log catches companies pushed without a contact
+        if _company_in_log(company_name, domain):
+            logger.info(f"Company already in local log, skipping: {company_name}")
             return "exists"
 
         company_id = client.create_company(company)
