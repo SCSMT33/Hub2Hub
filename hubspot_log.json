@@ -1,0 +1,10 @@
+{
+  "companies": [
+    {"name": "FlavorScale", "domain": "flavorscale.app", "pushed_at": "2026-05-18"},
+    {"name": "All Gravy", "domain": "allgravy.com", "pushed_at": "2026-05-18"},
+    {"name": "LifeBonder", "domain": "lifebonder.com", "pushed_at": "2026-05-18"},
+    {"name": "Simple", "domain": "andsimple.co", "pushed_at": "2026-05-18"},
+    {"name": "LoyaltyPlays", "domain": "", "pushed_at": "2026-05-18"},
+    {"name": "Synthesia", "domain": "synthesia.io", "pushed_at": "2026-05-18"}
+  ]
+}
