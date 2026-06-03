@@ -84,6 +84,11 @@
       "name": "Light",
       "domain": "light.com.br",
       "pushed_at": "2026-06-03"
+    },
+    {
+      "name": "Hunome",
+      "domain": "",
+      "pushed_at": "2026-06-03"
     }
   ]
 }
