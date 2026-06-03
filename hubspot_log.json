@@ -79,6 +79,11 @@
       "name": "Superside",
       "domain": "",
       "pushed_at": "2026-06-01"
+    },
+    {
+      "name": "Light",
+      "domain": "light.com.br",
+      "pushed_at": "2026-06-03"
     }
   ]
 }
