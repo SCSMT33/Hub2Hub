@@ -94,6 +94,11 @@
       "name": "Liva Healthcare",
       "domain": "",
       "pushed_at": "2026-06-08"
+    },
+    {
+      "name": "MeetingPackage",
+      "domain": "meetingpackage.com",
+      "pushed_at": "2026-06-15"
     }
   ]
 }
