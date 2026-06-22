@@ -144,6 +144,11 @@
       "name": "Mercell",
       "domain": "mercell.com",
       "pushed_at": "2026-06-22"
+    },
+    {
+      "name": "Framna",
+      "domain": "framna.com",
+      "pushed_at": "2026-06-22"
     }
   ]
 }
