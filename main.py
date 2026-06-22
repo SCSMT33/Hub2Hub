@@ -1,6 +1,7 @@
 import logging
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import schedule
 import time
@@ -152,6 +153,7 @@ def run_pipeline(cfg: dict, dry_run: bool = False):
 
 def run_interactive(cfg: dict):
     """Two-step workflow: scrape → show numbered list → user selects → push."""
+    _pull_latest_hubspot_log()
     print(f"\n{ts()} Starting TheHub scrape...")
 
     companies = scrape_jobs(ignore_seen=True)
@@ -229,6 +231,42 @@ def run_interactive(cfg: dict):
     print(f"\n{ts()} Pushing {len(to_push)} lead(s) to HubSpot...")
     pushed = push_to_hubspot(to_push, cfg["HUBSPOT_API_KEY"], cfg["HUBSPOT_OWNER_ID"])
     print(f"{ts()} Done — {pushed} record(s) pushed to HubSpot.")
+    if pushed:
+        _sync_hubspot_log_to_git()
+
+
+def _pull_latest_hubspot_log():
+    """Pull the latest hubspot_log.json before a manual run so we don't
+    re-treat companies the scheduled GitHub Actions run already pushed."""
+    import subprocess
+    repo_dir = Path(__file__).parent
+    try:
+        subprocess.run(["git", "pull", "--quiet"], cwd=repo_dir, check=True, timeout=30)
+    except Exception as e:
+        print(f"{ts()} WARNING: Could not git pull latest dedup log — {e}")
+        print(f"{ts()} Run 'git pull' manually first to avoid duplicate pushes.")
+
+
+def _sync_hubspot_log_to_git():
+    """Commit & push hubspot_log.json so manual runs stay in sync with the
+    GitHub Actions schedule's dedup log — otherwise the two drift apart and
+    the same company can get pushed to HubSpot twice."""
+    import subprocess
+    repo_dir = Path(__file__).parent
+    try:
+        subprocess.run(["git", "add", "hubspot_log.json"], cwd=repo_dir, check=True)
+        diff = subprocess.run(["git", "diff", "--staged", "--quiet"], cwd=repo_dir)
+        if diff.returncode == 0:
+            return  # nothing changed
+        subprocess.run(
+            ["git", "commit", "-m", "Update HubSpot push log [manual run]"],
+            cwd=repo_dir, check=True,
+        )
+        subprocess.run(["git", "push"], cwd=repo_dir, check=True)
+        print(f"{ts()} Synced hubspot_log.json to GitHub.")
+    except Exception as e:
+        print(f"{ts()} WARNING: Could not sync hubspot_log.json to GitHub — {e}")
+        print(f"{ts()} Run 'git add hubspot_log.json && git commit -m sync && git push' manually to avoid duplicate pushes.")
 
 
 def list_owners(cfg: dict):
