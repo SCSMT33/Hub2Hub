@@ -2,8 +2,8 @@ name: Hub2Hub Lead Pipeline
 
 on:
   schedule:
-    - cron: '0 6 * * 1'  # Monday 08:00 CEST (06:00 UTC)
-    - cron: '0 6 * * 3'  # Wednesday 08:00 CEST (06:00 UTC)
+    - cron: '45 6 * * 1'  # Monday 08:45 CEST / 07:45 CET (06:45 UTC)
+    - cron: '45 6 * * 3'  # Wednesday 08:45 CEST / 07:45 CET (06:45 UTC)
   workflow_dispatch:
     inputs:
       mode:
