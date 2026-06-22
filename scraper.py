@@ -12,7 +12,7 @@ BASE_URL = (
     "https://thehub.io/jobs"
     "?roles=backenddeveloper&roles=devops&roles=frontenddeveloper"
     "&roles=fullstackdeveloper&roles=mobiledevelopment&roles=uxuidesigner"
-    "&roles=qualityassurance&countryCode=REMOTE&sorting=newJobs"
+    "&roles=qualityassurance&sorting=newJobs"
 )
 
 logger = logging.getLogger(__name__)
